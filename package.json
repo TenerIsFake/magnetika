@@ -6,6 +6,8 @@
   "engines": { "node": ">=18" },
   "scripts": {
     "reference": "node tools/extract-reference.mjs && node reference/render.mjs",
-    "reference:check": "node tools/extract-reference.mjs --check && node reference/render.mjs --check"
+    "reference:check": "node tools/extract-reference.mjs --check && node reference/render.mjs --check",
+    "build": "cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build",
+    "test": "npm run -s reference:check && npm run -s build && ctest --test-dir build --output-on-failure"
   }
 }

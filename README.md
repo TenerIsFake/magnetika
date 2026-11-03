@@ -14,14 +14,16 @@ magnetic band on each rim). The plugin does not need the hardware to exist.
 
 ## Status
 
-**Phase 0 — reference.** The original engine is a JavaScript AudioWorklet in a browser player
-(`reference/original/player.html`). It is extracted, seeded, and rendered into reference audio
-here; the C++ port must reproduce those renders.
+**Phase 1: C++ engine.** The original engine is a JavaScript AudioWorklet in a browser player
+(`reference/original/player.html`). It is extracted, seeded, and rendered into reference audio,
+and the C++ engine in `engine/` reproduces those renders: 7 of 17 scenarios are bit-identical,
+and the rest differ only by last-bit maths-library rounding (worst −202 dB). The test limit is
+−150 dB. A 2 % change to one minor coupling coefficient already lands at −78 dB.
 
 | Phase | Work | State |
 |---|---|---|
 | 0 | Reference engine extracted from the browser player; 17 reference renders | done |
-| 1 | Plain C++ engine + offline renderer, matched against the reference | next |
+| 1 | Plain C++ engine + offline renderer, matched against the reference | engine done |
 | 2 | JUCE VST3 + Standalone: CC map, presets, 16 voices | |
 | 3 | Bowl-view editor | |
 | 4 | MPE, per-bowl tuning table, `.scl` microtuning | |
@@ -36,20 +38,32 @@ reference/
   scenarios.mjs        one scenario per mechanism (sustain, brake, rotation, trim, ...)
   render.mjs           renders the scenarios through the player's own control flow
   manifest.json        sha256 + level of every reference render
+engine/
+  include/magnetika/   bowl, bar, synth, params; jsmath (V8-compatible hypot, xorshift32)
+  src/
+  tests/               behaviour the reference does not have (armed coils, voice stealing)
 tools/
   extract-reference.mjs
+  render-cli/          replays renders/trace.txt through the C++ engine
+  compare.mjs          port vs reference, per scenario
 ```
 
 ## Running
 
-Node 18 or later, no dependencies.
+Node 18 or later, CMake 3.22 or later, a C++17 compiler. No other dependencies.
 
 ```sh
-npm run reference          # extract the engine and render renders/*.wav
+npm run reference          # extract the engine, render renders/*.wav and renders/trace.txt
 npm run reference:check    # fail if the extraction or any render has changed
+npm test                   # build, then run every test, including the port against the reference
 ```
 
 `renders/` holds 32-bit float stereo WAVs at 48 kHz. They are not committed; `manifest.json` is.
+The reference renderer also writes `renders/trace.txt`, every call it made into the engine,
+which `render-cli` replays.
+
+The engine must be compiled without floating-point contraction or fast-math (the CMake
+build sets this); otherwise the comparison with the reference loses its meaning.
 
 ## MIDI
 
