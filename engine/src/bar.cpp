@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "magnetika/jsmath.hpp"
+
 namespace magnetika {
 
 namespace {
@@ -29,6 +31,7 @@ void BarParams::set(ParamId id, double v) {
         case ParamId::master: master = v; break;
         case ParamId::bend: bend = v; break;
         case ParamId::pressure: pressure = v; break;
+        case ParamId::damperT60: damperT60 = v; break;
         default: break;  // glass-only
     }
 }
@@ -47,6 +50,8 @@ void BarPhysics::noteOn(double vel) {
     st_ = 0;
     sv_ = vel;
     on_ = true;
+    // Nyquist guard for the 4x partial; see BowlPhysics::noteOn.
+    keep2_ = !nyquistGuard_ || p.f0 * p.ratio < 0.5 * sr_ / 1.05;
 }
 
 void BarPhysics::silence() {
@@ -92,6 +97,21 @@ void BarPhysics::step() {
     }
     a[0] = (F1 + D1 + K1) / m - w1 * w1 * q[0] - (w1 / P.Q1) * v[0];
     a[1] = (F2 + D2) / m - w2 * w2 * q[1] - (w2 / P.Q2) * v[1];
+
+    // Damper (not in the JS): the vibraphone damper bar. Released bars are damped
+    // to a damperT60 tail unless the sustain coils hold them. See BowlPhysics.
+    const bool sustainHeld = P.driveOn != 0 && P.G > 0;
+    const double dampTarget = (P.damperT60 > 0 && !on_ && !sustainHeld) ? 1.0 : 0.0;
+    if (dampTarget > 0 || damp_ > 0) {
+        damp_ += (dampTarget - damp_) * js::min1(dt / 0.03);
+        if (damp_ < 1e-9) damp_ = 0;
+    }
+    if (damp_ > 0) {
+        const double sigma = 6.907755278982137 / (P.damperT60 > 0 ? P.damperT60 : 1e9);
+        a[0] -= std::fmax(0.0, 2 * sigma - w1 / P.Q1) * damp_ * v[0];
+        a[1] -= std::fmax(0.0, 2 * sigma - w2 / P.Q2) * damp_ * v[1];
+    }
+
     for (int i = 0; i < 2; ++i) {
         v[i] += a[i] * dt;
         q[i] += v[i] * dt;
@@ -116,7 +136,7 @@ void BarPhysics::render(float* L, float* R, int n, bool add) {
     const double gl = std::sqrt(1 - pan) * 1.2, gr = std::sqrt(pan) * 1.2;
     for (int i = 0; i < n; ++i) {
         for (int s = 0; s < sub_; ++s) step();
-        const double y = g * (a_[0] + 0.45 * a_[1]);
+        const double y = g * (a_[0] + (keep2_ ? 0.45 * a_[1] : 0.0));
         if (add) {
             L[i] = static_cast<float>(static_cast<double>(L[i]) + y * gl);
             R[i] = static_cast<float>(static_cast<double>(R[i]) + y * gr);

@@ -10,6 +10,7 @@ struct BarParams {
     double f0 = 440, Q1 = 2500, Q2 = 1500, ratio = 4.0, strikeF = 25, contact = 2.0, strikePos = 0.3;
     double driveOn = 0, G = 0.8, Fmax = 0.5, vset = 0.2, vibDepth = 0, vibRate = 5.5, Fvib = 0.5, coil2 = 0;
     double listen = 0, master = 0.6, bend = 0, pressure = 1;
+    double damperT60 = 0;  // not in the JS; 0 = off
 
     void set(ParamId id, double v);  // glass-only ids are ignored
     double get(ParamId id) const;
@@ -22,6 +23,10 @@ public:
     BarParams p;
 
     void set(ParamId id, double v) { p.set(id, v); }
+    void setModalMass(double kg) { m_ = kg; }  // JS fixes 0.2
+    double modalMass() const { return m_; }
+    void setNyquistGuard(bool on) { nyquistGuard_ = on; }
+    bool partialAudible() const { return keep2_; }
     void noteOn(double vel);
     void noteOff() { on_ = false; }
     void kick(double vel) { noteOn(vel); }
@@ -40,9 +45,11 @@ private:
     int sub_ = 2;
     double dt_;
     double q_[2] = {}, v_[2] = {}, a_[2] = {};
-    static constexpr double m_ = 0.2;
+    double m_ = 0.2;
     double env_ = 0, venv_ = 0, t_ = 0, st_ = -1, sv_ = 0;
     bool on_ = false;
+    double damp_ = 0;
+    bool nyquistGuard_ = true, keep2_ = true;
 };
 
 } // namespace magnetika

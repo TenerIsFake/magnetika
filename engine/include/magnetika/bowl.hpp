@@ -17,6 +17,7 @@ struct BowlParams {
     double driveOn = 0, G = 0.8, Fmax = 0.06, vset = 0.3, rot = 0, vibDepth = 0, vibRate = 5.5,
            Fvib = 0.3, trim = 0, n3ctl = 0;
     double spin = 1, kappa = 0.35, listen = 0, master = 0.6, bend = 0, pressure = 1;
+    double damperT60 = 0;  // not in the JS; 0 = off
 
     // Applies the ids a bowl has; others (bar-only) are ignored, as Object.assign
     // stores them unused in the JS.
@@ -32,6 +33,13 @@ public:
 
     void set(ParamId id, double v) { p.set(id, v); }
     void seed(std::uint32_t s) { rng_.seed(s); }
+    // Modal mass in kg. The JS fixes 0.02 (a C5-sized bowl); set before noteOn.
+    void setModalMass(double kg) { m_ = kg; }
+    double modalMass() const { return m_; }
+    // Mute, in the output only, any mode pair whose frequency would sit above
+    // Nyquist (it would alias). Decided at noteOn, so it never switches mid-note.
+    void setNyquistGuard(bool on) { nyquistGuard_ = on; }
+    bool partialAudible(int pair) const { return pair == 2 ? keep2_ : keep3_; }
     void noteOn(double vel);
     void noteOff();
     void kick(double vel);
@@ -55,8 +63,11 @@ private:
     bool on_ = false, moving_ = false;
     double psi_, env_ = 0, noiseLP_ = 0, alpha_ = 0, venv_ = 0, t_ = 0;
     double velScale_ = 0;  // JS: undefined until the first noteOn; `velScale||1`
-    static constexpr double R_ = 0.045, m_ = 0.02, mu_k_ = 0.35;
+    static constexpr double R_ = 0.045, mu_k_ = 0.35;
+    double m_ = 0.02;
     double Ft_ = 0, vrel_ = 0;
+    double damp_ = 0;  // damper engagement 0..1, ramps in after release
+    bool nyquistGuard_ = true, keep2_ = true, keep3_ = true;
     js::XorShift32 rng_;
 };
 

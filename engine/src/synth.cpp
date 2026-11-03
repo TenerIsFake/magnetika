@@ -80,6 +80,13 @@ void Synth::make(Voice& v, int midi) {
     const double baseListen = store.has.test(listenIdx) ? store.value[listenIdx] : 0.0;
     v.set(ParamId::f0, 440 * std::pow(2.0, (midi - 69) / 12.0));
     v.set(ParamId::listen, baseListen + spread);
+    if (v.kind == Voice::Kind::Bowl) {
+        v.bowl.setNyquistGuard(nyquistGuard_);
+        if (scaleModalMass_) v.bowl.setModalMass(0.02 * std::pow(2.0, (72 - midi) / 12.0));
+    } else {
+        v.bar.setNyquistGuard(nyquistGuard_);
+        if (scaleModalMass_) v.bar.setModalMass(0.2 * std::pow(2.0, (72 - midi) / 24.0));
+    }
 }
 
 int Synth::stealIndex() const {

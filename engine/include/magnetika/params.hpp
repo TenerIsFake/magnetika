@@ -21,6 +21,8 @@ enum class ParamId : unsigned char {
     Q2, split, r3, Q3, N, dmu, vs, breath, fingerSpeed, rot, trim, n3ctl, spin, kappa,
     // bars
     Q1, ratio, strikeF, contact, strikePos, coil2,
+    // plugin additions (not in the JS reference; 0 = off = reference behaviour)
+    damperT60,  // seconds: dry-finger / damper-bar tail after release, 0 = off
     Count
 };
 

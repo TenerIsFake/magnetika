@@ -36,6 +36,7 @@ void BowlParams::set(ParamId id, double v) {
         case ParamId::master: master = v; break;
         case ParamId::bend: bend = v; break;
         case ParamId::pressure: pressure = v; break;
+        case ParamId::damperT60: damperT60 = v; break;
         default: break;  // bar-only
     }
 }
@@ -63,6 +64,11 @@ void BowlPhysics::noteOn(double vel) {
     }
     velScale_ = 0.4 + 0.8 * vel;
     psi_ = thF_;
+    // Nyquist guard, decided once per note so a mode never pops in or out. The
+    // 5 % margin covers pitch bend (+40 c) and vibrato on top of the note.
+    const double limit = 0.5 * sr_ / 1.05;
+    keep2_ = !nyquistGuard_ || p.f0 < limit;
+    keep3_ = !nyquistGuard_ || p.f0 * p.r3 < limit;
 }
 
 void BowlPhysics::noteOff() {
@@ -176,6 +182,29 @@ void BowlPhysics::step() {
     a[1] = (Q2B + FB + FkB) / m - w0 * w0 * q[1] - w0 * dw2 * (s4 * q[0] - c4 * q[1]) - (w0 / P.Q2) * v[1] + g2 * v[0];
     a[2] = (Q3A + F3A) / m - w3 * w3 * q[2] - w3 * dw3 * (c6 * q[2] + s6 * q[3]) - (w3 / P.Q3) * v[2] - g3 * v[3];
     a[3] = (Q3B + F3B) / m - w3 * w3 * q[3] - w3 * dw3 * (s6 * q[2] - c6 * q[3]) - (w3 / P.Q3) * v[3] + g3 * v[2];
+
+    // Damper (not in the JS): a dry finger laid on the released bowl, the
+    // traditional way to stop an armonica note. Engages over 30 ms after the
+    // wet finger lifts, and only while the sustain coils are not holding the note,
+    // so it never fights sustain. Adds just enough damping to bring each mode's
+    // tail to damperT60 seconds (60 dB); a mode already decaying faster is left
+    // alone. damperT60 = 0 keeps damp_ at exactly 0, so the JS path is untouched.
+    const bool sustainHeld = P.driveOn != 0 && P.G > 0;
+    const double dampTarget = (P.damperT60 > 0 && !on_ && !sustainHeld) ? 1.0 : 0.0;
+    if (dampTarget > 0 || damp_ > 0) {
+        damp_ += (dampTarget - damp_) * js::min1(dt / 0.03);
+        if (damp_ < 1e-9) damp_ = 0;
+    }
+    if (damp_ > 0) {
+        const double sigma = 6.907755278982137 / (P.damperT60 > 0 ? P.damperT60 : 1e9);  // ln(1000)/T60
+        const double c2x = std::fmax(0.0, 2 * sigma - w0 / P.Q2) * damp_;
+        const double c3x = std::fmax(0.0, 2 * sigma - w3 / P.Q3) * damp_;
+        a[0] -= c2x * v[0];
+        a[1] -= c2x * v[1];
+        a[2] -= c3x * v[2];
+        a[3] -= c3x * v[3];
+    }
+
     for (int i = 0; i < 4; ++i) {
         v[i] += a[i] * dt;
         q[i] += v[i] * dt;
@@ -205,7 +234,10 @@ void BowlPhysics::render(float* L, float* R, int n, bool add) {
     const double dth = 0.26, thL = p.listen - dth, thR = p.listen + dth;
     const double c2L = std::cos(2 * thL), s2L = std::sin(2 * thL), c3L = std::cos(3 * thL), s3L = std::sin(3 * thL);
     const double c2R = std::cos(2 * thR), s2R = std::sin(2 * thR), c3R = std::cos(3 * thR), s3R = std::sin(3 * thR);
-    const double g2 = 3e-4 * p.master, g3 = 1.8e-4 * p.master;
+    // Nyquist guard: a muted pair still runs (it couples through the finger), it is
+    // just not heard. Multiplying by an exact 0 or leaving the gain alone keeps the
+    // audible path bit-identical to the JS.
+    const double g2 = keep2_ ? 3e-4 * p.master : 0.0, g3 = keep3_ ? 1.8e-4 * p.master : 0.0;
     for (int i = 0; i < n; ++i) {
         for (int s = 0; s < sub_; ++s) step();
         double nz = 0;

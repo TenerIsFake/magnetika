@@ -90,6 +90,24 @@ The plugin keeps the browser player's map, so the two are interchangeable on one
   spring and trim live at zero sustain gain unless the switch is off.
 - Voice stealing never takes a held note (the original can, with all eight voices held).
 - Voices are preallocated; nothing allocates on the audio thread.
+- **Damper** (`damperT60`, seconds): after release, a dry finger on the bowl (the traditional way
+  to stop an armonica note) or the damper bar on a vibraphone. It brings the tail to the set
+  60 dB time, whatever the note's mass, and stays off while the sustain coils hold the note.
+  It exists because with constant Q a low note rings for a long time (about 17 s at C2), and the
+  force-limited brake cannot stop it quickly.
+- **Nyquist guard**: a mode that would sit above half the sample rate is muted in the output
+  (it still runs, since it couples through the finger). This is decided once per note, so it never
+  switches mid-note. At 48 kHz it affects bars from MIDI 114 and glass from MIDI 121, all above
+  the real instrument's C3–C6 range.
+- **Modal-mass scaling** (optional, off): mass follows the design tables (glass doubles per octave
+  down, bars by √2), anchored at C5. It is off because the finger and coil forces do not scale
+  with it. A C3 bowl then barely speaks in its first second, and how hard a player presses a big
+  bowl is not modelled. The bench rig is what would calibrate it.
+- Upward-only "always on" protections: adaptive substeps keep the top of the keyboard stable (the
+  original diverges from MIDI 119), and a non-finite voice is freed rather than silencing the mix.
+
+All of these are off, or cannot trigger, in the reference range, so the port-vs-reference test
+still holds with them compiled in.
 - AU is not planned. VST3 and Standalone cover the Windows hosts this is built for.
 
 ## License

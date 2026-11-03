@@ -208,6 +208,206 @@ void testVoicesFreeAfterDecay() {
     CHECK(s.activeVoices() == 0, "voice not freed after decay: %d active", s.activeVoices());
 }
 
+// ---------------------------------------------------------------- plugin additions
+
+struct Stereo {
+    std::vector<float> L, R;
+    // energy over [a, b) seconds, both channels (the pattern turns past the ears,
+    // so one channel alone swings with the precession)
+    double energyDb(double a, double b) const {
+        double s = 0;
+        const size_t i0 = static_cast<size_t>(a * SR), i1 = static_cast<size_t>(b * SR);
+        for (size_t i = i0; i < i1 && i < L.size(); ++i)
+            s += static_cast<double>(L[i]) * L[i] + static_cast<double>(R[i]) * R[i];
+        return 10 * std::log10(s / static_cast<double>(i1 - i0) + 1e-30);
+    }
+};
+
+struct NoteSpec {
+    Instrument inst = Instrument::Glass;
+    int midi = 72;
+    double damperT60 = 0;
+    bool sustain = false, scaleMass = false, brakeAtRelease = false, guard = true;
+    double seconds = 3.0, releaseAt = 1.0;
+};
+
+Stereo playNote(const NoteSpec& n) {
+    Synth s(SR);
+    playerDefaults(s);
+    s.setInst(n.inst);
+    s.setScaleModalMass(n.scaleMass);
+    s.setNyquistGuard(n.guard);
+    const ParamValue d[] = {{ParamId::damperT60, n.damperT60}};
+    s.setParams(n.inst, d, 1);
+    if (n.sustain) {
+        const PerfValue sus[] = {{PerfId::sustain, 1}};
+        s.setPerf(sus, 1);
+    }
+    s.noteOn(n.midi, 0.8);
+    Stereo out;
+    const int total = static_cast<int>(n.seconds * SR) / BLOCK * BLOCK;
+    const int release = static_cast<int>(n.releaseAt * SR) / BLOCK * BLOCK;
+    out.L.resize(static_cast<size_t>(total));
+    out.R.resize(static_cast<size_t>(total));
+    for (int i = 0; i < total; i += BLOCK) {
+        if (i == release) {
+            s.noteOff(n.midi);
+            if (n.brakeAtRelease) {
+                const PerfValue br[] = {{PerfId::sustain, 0}, {PerfId::brake, 1}};
+                s.setPerf(br, 2);
+            }
+        }
+        s.render(&out.L[static_cast<size_t>(i)], &out.R[static_cast<size_t>(i)], BLOCK);
+    }
+    return out;
+}
+
+bool identical(const Stereo& a, const Stereo& b) { return a.L == b.L && a.R == b.R; }
+
+void testDamperSetsTheTail() {
+    // C3 is the long-tail case (Q/(pi f) is several seconds); C5 for contrast.
+    for (int midi : {48, 72}) {
+        NoteSpec n;
+        n.midi = midi;
+        n.seconds = 3.0;
+        n.releaseAt = 1.0;
+        const Stereo free = playNote(n);
+        n.damperT60 = 1.5;
+        const Stereo damped = playNote(n);
+        // Over the 1.5 s after the damper has engaged (it ramps in over ~30 ms),
+        // a 1.5 s T60 should take about 60 dB off. Wide bounds: the envelope swings
+        // as the pattern precesses past the ears.
+        const double drop = damped.energyDb(1.05, 1.25) - damped.energyDb(2.55, 2.75);
+        const double freeDrop = free.energyDb(1.05, 1.25) - free.energyDb(2.55, 2.75);
+        CHECK(drop > 45 && drop < 80, "MIDI %d: damper T60 1.5 s dropped %.1f dB in 1.5 s (want ~60)", midi, drop);
+        CHECK(drop > freeDrop + 20, "MIDI %d: damper barely beats free decay (%.1f vs %.1f dB)", midi, drop, freeDrop);
+        // Before release the damper must not touch anything.
+        bool sameBefore = true;
+        for (size_t i = 0; i < static_cast<size_t>(1.0 * SR) / BLOCK * BLOCK; ++i)
+            sameBefore = sameBefore && free.L[i] == damped.L[i] && free.R[i] == damped.R[i];
+        CHECK(sameBefore, "MIDI %d: damper changed the sound while the note was held", midi);
+    }
+}
+
+void testDamperYieldsToSustain() {
+    // With the sustain coils holding the released note, the damper stays off:
+    // bit-identical to no damper at all.
+    NoteSpec n;
+    n.sustain = true;
+    const Stereo a = playNote(n);
+    n.damperT60 = 0.5;
+    CHECK(identical(a, playNote(n)), "damper acted while sustain held the note");
+}
+
+void testDamperOnBars() {
+    NoteSpec n;
+    n.inst = Instrument::Bars;
+    n.midi = 60;
+    const Stereo free = playNote(n);
+    n.damperT60 = 1.0;
+    const Stereo damped = playNote(n);
+    const double drop = damped.energyDb(1.05, 1.25) - damped.energyDb(2.05, 2.25);
+    CHECK(drop > 40 && drop < 80, "bars: damper T60 1.0 s dropped %.1f dB in 1 s (want ~60)", drop);
+    CHECK(free.energyDb(2.05, 2.25) > damped.energyDb(2.05, 2.25) + 20, "bars: damper had no effect");
+}
+
+void testModalMassScaling() {
+    // Anchored at C5: scaling must leave MIDI 72 bit-identical, glass and bars.
+    for (Instrument inst : {Instrument::Glass, Instrument::Bars}) {
+        NoteSpec n;
+        n.inst = inst;
+        n.midi = 72;
+        const Stereo a = playNote(n);
+        n.scaleMass = true;
+        CHECK(identical(a, playNote(n)), "%s: mass scaling changed C5",
+              inst == Instrument::Glass ? "glass" : "bars");
+    }
+    // A heavier low bowl under the same finger and coils builds up more slowly.
+    // Measured 2026-11-03: at C3 with scaling (80 g) the note is still at the
+    // friction-noise level (-35 dB) after 1 s, where the 20 g bowl reaches -20 dB.
+    // That is why scaling is off by default: the finger and coil forces do not
+    // scale with the bowl, and how hard a player presses a big bowl is not modelled.
+    // (A brake comparison is confounded by this: the heavy note never got going.)
+    NoteSpec n;
+    n.midi = 48;
+    n.sustain = true;
+    n.seconds = 1.0;
+    n.releaseAt = 1.0;
+    const double lightLevel = playNote(n).energyDb(0.75, 1.0);
+    n.scaleMass = true;
+    const double heavyLevel = playNote(n).energyDb(0.75, 1.0);
+    CHECK(heavyLevel < lightLevel - 6, "C3: scaled (heavier) bowl built up as fast as the 20 g one (%.1f vs %.1f dB)",
+          heavyLevel, lightLevel);
+}
+
+// Energy between f1 and f2 Hz, by direct DFT over n samples starting at t0.
+double bandDb(const std::vector<float>& x, double t0, int n, double f1, double f2) {
+    const size_t i0 = static_cast<size_t>(t0 * SR);
+    double e = 0;
+    for (int k = static_cast<int>(f1 * n / SR); k <= static_cast<int>(f2 * n / SR); ++k) {
+        double re = 0, im = 0;
+        for (int i = 0; i < n; ++i) {
+            const double w = 0.5 - 0.5 * std::cos(2 * 3.141592653589793 * i / n);  // Hann
+            const double ph = 2 * 3.141592653589793 * k * i / n;
+            re += w * x[i0 + static_cast<size_t>(i)] * std::cos(ph);
+            im -= w * x[i0 + static_cast<size_t>(i)] * std::sin(ph);
+        }
+        e += re * re + im * im;
+    }
+    return 10 * std::log10(e + 1e-30);
+}
+
+void testNyquistGuard() {
+    // Bars MIDI 120: f0 8.37 kHz, the 4x partial at 33.5 kHz aliases into the
+    // 12-20 kHz band at 48 kHz. Guarded, that band should be empty.
+    NoteSpec n;
+    n.inst = Instrument::Bars;
+    n.midi = 120;
+    n.seconds = 0.5;
+    n.releaseAt = 0.5;
+    n.guard = false;
+    const double aliased = bandDb(playNote(n).L, 0.05, 4096, 12000, 20000);
+    n.guard = true;
+    const double guarded = bandDb(playNote(n).L, 0.05, 4096, 12000, 20000);
+    CHECK(aliased - guarded > 30, "bars MIDI 120: guard removed only %.1f dB of alias", aliased - guarded);
+
+    // Per-mode decisions, straight from the physics.
+    BowlPhysics hi(SR);
+    hi.p.f0 = 10548;  // MIDI 124: (3,0) at 29.3 kHz
+    hi.noteOn(1.0);
+    CHECK(hi.partialAudible(2) && !hi.partialAudible(3), "MIDI 124: expected (2,0) kept, (3,0) muted");
+    BowlPhysics c6(SR);
+    c6.p.f0 = 1046.5;  // top of the real instrument
+    c6.noteOn(1.0);
+    CHECK(c6.partialAudible(2) && c6.partialAudible(3), "C6 must keep both pairs");
+    // The limit is 24 kHz / 1.05 = 22.86 kHz (room for +40 c bend and vibrato).
+    BarPhysics b113(SR);
+    b113.p.f0 = 5587.65;  // MIDI 113: partial 22.35 kHz, just under the limit -> kept
+    b113.noteOn(1.0);
+    CHECK(b113.partialAudible(), "MIDI 113 bar partial at 22.35 kHz is under the limit and must be kept");
+    BarPhysics b114(SR);
+    b114.p.f0 = 5919.91;  // MIDI 114: partial 23.68 kHz -> muted
+    b114.noteOn(1.0);
+    CHECK(!b114.partialAudible(), "MIDI 114 bar partial at 23.68 kHz should be muted");
+}
+
+void testDamperIndependentOfMass() {
+    // The damper acts on acceleration directly, so it sets the same tail whatever
+    // the modal mass: it is the tool for long low tails, not mass scaling.
+    NoteSpec n;
+    n.midi = 60;
+    n.sustain = false;
+    n.damperT60 = 1.0;
+    n.seconds = 2.5;
+    n.releaseAt = 1.0;
+    const Stereo a = playNote(n);
+    n.scaleMass = true;
+    const Stereo b = playNote(n);
+    const double dropA = a.energyDb(1.05, 1.2) - a.energyDb(2.05, 2.2);
+    const double dropB = b.energyDb(1.05, 1.2) - b.energyDb(2.05, 2.2);
+    CHECK(dropA > 40 && dropB > 40, "damper T60 1 s: drops %.1f (20 g) and %.1f dB (scaled), want ~60 both", dropA, dropB);
+}
+
 } // namespace
 
 int main() {
@@ -218,6 +418,12 @@ int main() {
     testStealWhenAllHeld();
     testVoicesFreeAfterDecay();
     testWholeKeyboardStaysFinite();
+    testDamperSetsTheTail();
+    testDamperYieldsToSustain();
+    testDamperOnBars();
+    testModalMassScaling();
+    testNyquistGuard();
+    testDamperIndependentOfMass();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

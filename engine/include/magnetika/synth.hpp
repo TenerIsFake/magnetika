@@ -12,6 +12,15 @@
 //      without sustain. Off by default here so the engine matches the reference;
 //      the plugin turns it on. Turning it off restores the JS *parameters*; drive
 //      state accumulated while armed (vibrato phase, drive-axis angle) carries over.
+//   5. `scaleModalMass` (off by default): modal mass follows the rev B tables
+//      instead of the JS's fixed C5-sized mass. Glass doubles per octave down
+//      (149 / 75 / 37 g at C4 / C5 / C6), bars by sqrt(2) per octave (511 / 361 /
+//      255 g), both anchored at C5 = MIDI 72 to the JS values (20 g, 200 g), so C5
+//      is unchanged. Heavier low notes start slower, brake slower, bend less.
+//   6. `nyquistGuard` (on by default; it cannot trigger in the reference range): a
+//      mode above Nyquist is muted in the output, decided per note at noteOn.
+//   7. The `damperT60` parameter (0 by default): a damping tail after release,
+//      see BowlPhysics::step.
 //   4. A voice whose state goes non-finite is freed and the output sample zeroed,
 //      instead of poisoning the mix for good. (With the substep fix in the physics
 //      this should not happen; it is a guard, not a mechanism.)
@@ -43,6 +52,9 @@ public:
     void setParams(Instrument which, const ParamValue* values, int count);
     void setPerf(const PerfValue* values, int count);
     void setCoilsArmed(bool armed);
+    // These two take effect from the next note; sounding notes keep what they had.
+    void setScaleModalMass(bool on) { scaleModalMass_ = on; }
+    void setNyquistGuard(bool on) { nyquistGuard_ = on; }
 
     void noteOn(int midi, double vel);
     void noteOff(int midi);
@@ -89,6 +101,8 @@ private:
     Store glassP_, barP_;
     double sustain_ = 0, brake_ = 0, Gs_ = 0.8, Gb_ = 1.5;
     bool coilsArmed_ = false;
+    bool scaleModalMass_ = false;
+    bool nyquistGuard_ = true;
     std::uint64_t tick_ = 0;
     std::uint32_t notes_ = 0;
 };
