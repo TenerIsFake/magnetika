@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(magnetika VERSION 0.1.0 LANGUAGES CXX)
+project(magnetika VERSION 0.1.0 LANGUAGES C CXX)  # C: JUCE requires it
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -22,6 +22,13 @@ if(MAGNETIKA_SANITIZE AND NOT MSVC)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
+if(WIN32 OR APPLE)
+  set(MAGNETIKA_PLUGIN_DEFAULT ON)
+else()
+  set(MAGNETIKA_PLUGIN_DEFAULT OFF)  # Linux needs X11/ALSA dev packages for JUCE
+endif()
+option(MAGNETIKA_PLUGIN "Build the JUCE plugin (VST3 + Standalone); fetches JUCE" ${MAGNETIKA_PLUGIN_DEFAULT})
+
 add_library(magnetika_engine STATIC
   engine/src/params.cpp
   engine/src/bowl.cpp
@@ -30,6 +37,20 @@ add_library(magnetika_engine STATIC
 )
 target_include_directories(magnetika_engine PUBLIC engine/include)
 target_compile_options(magnetika_engine PRIVATE ${MAGNETIKA_FP_FLAGS} ${MAGNETIKA_WARN})
+
+# ---------------------------------------------------------------- plugin
+# JUCE is fetched at configure time, never vendored into this repository. It is
+# used under the JUCE 9 licence (the free Starter tier covers individuals); see
+# README "License". Pinned to an exact release tag.
+if(MAGNETIKA_PLUGIN)
+  include(FetchContent)
+  FetchContent_Declare(juce
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG 9.0.5
+    GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(juce)
+  add_subdirectory(plugin)
+endif()
 
 add_executable(render-cli tools/render-cli/main.cpp)
 target_link_libraries(render-cli PRIVATE magnetika_engine)

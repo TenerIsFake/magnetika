@@ -25,8 +25,8 @@ for both maths libraries.
 | Phase | Work | State |
 |---|---|---|
 | 0 | Reference engine extracted from the browser player; 17 reference renders | done |
-| 1 | Plain C++ engine + offline renderer, matched against the reference | engine done |
-| 2 | JUCE VST3 + Standalone: CC map, presets, 16 voices | |
+| 1 | Plain C++ engine + offline renderer, matched against the reference | done |
+| 2 | JUCE VST3 + Standalone: CC map, parameters, 16 voices, material picker | plugin shell done |
 | 3 | Bowl-view editor | |
 | 4 | MPE, per-bowl tuning table, `.scl` microtuning | |
 
@@ -48,7 +48,29 @@ tools/
   extract-reference.mjs
   render-cli/          replays renders/trace.txt through the C++ engine
   compare.mjs          port vs reference, per scenario
+plugin/                JUCE 9 VST3 + Standalone (Windows/macOS builds)
+  Parameters.*         every player control, plus armed coils, damper, mass scaling
+  PluginProcessor.*    sample-accurate MIDI, last-writer-wins between CC and parameter
+  PluginEditor.*       plain controls + keyboard with the C3–C6 instrument range marked
+  tests/               MIDI timing, block-size independence, CC mapping, state, mono bus
 ```
+
+## Building the plugin
+
+On Windows with Visual Studio 2022 or later (JUCE 9.0.5 is fetched by CMake at configure time):
+
+```sh
+cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+cmake --build build --config Release
+```
+
+This produces `build/plugin/Magnetika_artefacts/Release/VST3/Magnetika.vst3` and
+`.../Standalone/Magnetika.exe`. Copy the `.vst3` folder to `C:\Program Files\Common Files\VST3`.
+On Linux the plugin is off by default (`-DMAGNETIKA_PLUGIN=ON` needs JUCE's X11/ALSA dependencies);
+the engine and its tests build everywhere.
+
+Plugin defaults depart from the reference player: coils always armed, a 1.5 s glass damper and a
+2.5 s bar damper, and 16 voices instead of 8. Validated with pluginval at strictness 10.
 
 ## Running
 
