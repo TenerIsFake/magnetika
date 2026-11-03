@@ -19,6 +19,8 @@ magnetic band on each rim). The plugin does not need the hardware to exist.
 and the C++ engine in `engine/` reproduces those renders: 7 of 17 scenarios are bit-identical,
 and the rest differ only by last-bit maths-library rounding (worst −202 dB). The test limit is
 −150 dB. A 2 % change to one minor coupling coefficient already lands at −78 dB.
+Checked with GCC 13 (Linux) and MSVC 2026 (Windows, worst scenario −190.6 dB): the limit holds
+for both maths libraries.
 
 | Phase | Work | State |
 |---|---|---|
