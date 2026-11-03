@@ -1,0 +1,11 @@
+{
+  "name": "magnetika",
+  "private": true,
+  "type": "module",
+  "description": "Physical-model glass armonica and vibraphone driven by virtual coils",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "reference": "node tools/extract-reference.mjs && node reference/render.mjs",
+    "reference:check": "node tools/extract-reference.mjs --check && node reference/render.mjs --check"
+  }
+}

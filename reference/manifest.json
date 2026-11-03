@@ -1,0 +1,109 @@
+{
+  "sample_rate": 48000,
+  "block": 128,
+  "engine_source": "cd866257a0e10b70729e3f3160532f3a65bec2033600ca03bf1519da6ba820cc",
+  "scenarios": {
+    "glass_rub_release": {
+      "sha256": "78c7d372ab86990d960363d02fb77486916b7dacddc9eb2bd762adf371fb9646",
+      "frames": 144000,
+      "peak": 0.51081,
+      "rms": 0.160429
+    },
+    "glass_fixed_bowl": {
+      "sha256": "f75ae540c1f8c7def1578fd969ef338dc0d7f64ecb7ce4394aa5a51c18623b59",
+      "frames": 144000,
+      "peak": 0.413567,
+      "rms": 0.102376
+    },
+    "glass_sustain": {
+      "sha256": "0fce0f89e9cdeb7b0792b71fd12c666ba40e19496d4573b81b3f9dbc02d3d23c",
+      "frames": 144000,
+      "peak": 0.388403,
+      "rms": 0.118375
+    },
+    "glass_brake": {
+      "sha256": "71d341723f78c59a464f740639dc4bbbc4fda81a6309e95bec817bd71e92fc52",
+      "frames": 144000,
+      "peak": 0.388403,
+      "rms": 0.086381
+    },
+    "glass_rotation": {
+      "sha256": "67b92b883a0496cd8e0558bf02cb8e1757fb578ca2524008f8f0617c69043cae",
+      "frames": 144000,
+      "peak": 0.589208,
+      "rms": 0.165319
+    },
+    "glass_bryan_spin": {
+      "sha256": "7b8e93ba554bb19042e3c43d4b4477152073e5b353e9331b75dd394c81827ccf",
+      "frames": 144000,
+      "peak": 0.040831,
+      "rms": 0.007074
+    },
+    "glass_trim": {
+      "sha256": "7dbb72694fdb5f4da9265ea9ed31c8823217715bf57c86b9279470cacfb96972",
+      "frames": 144000,
+      "peak": 0.309831,
+      "rms": 0.109237
+    },
+    "glass_vibrato": {
+      "sha256": "9ac13d1b53c828efd1d6d53319bf955d80b7f5df10625774ba74a285e0d2b9a3",
+      "frames": 144000,
+      "peak": 0.401647,
+      "rms": 0.119127
+    },
+    "glass_bend": {
+      "sha256": "b0798b6d188b717a2da6f1ced3e39b535a8691569e413bdc8ddc181bf3362d10",
+      "frames": 144000,
+      "peak": 0.388403,
+      "rms": 0.116367
+    },
+    "glass_n3": {
+      "sha256": "b0e855f39553b53889bb5d2dd421a71ecb6720b87bf618dc4b0f42589448da5a",
+      "frames": 144000,
+      "peak": 0.448237,
+      "rms": 0.141246
+    },
+    "glass_silica": {
+      "sha256": "4d2777af2ecb2cf647d728c1d25bf40ba6c1a757bd599ff202ed05c1e596ec17",
+      "frames": 192000,
+      "peak": 0.10521,
+      "rms": 0.038078
+    },
+    "glass_pressure": {
+      "sha256": "2ebee50204b0fdd6fdc5a47eb78eff79c2e86635436311d69172a72d77435f97",
+      "frames": 144000,
+      "peak": 0.564238,
+      "rms": 0.187109
+    },
+    "glass_chord": {
+      "sha256": "4201e44897169e0154306caa61195d98c47b7679c1ec798613ebed9a76eaa39d",
+      "frames": 144000,
+      "peak": 0.508244,
+      "rms": 0.141382
+    },
+    "glass_low_high": {
+      "sha256": "5ebacdaf8d1178099c2c4eb8ed1db03cd0178c61ea560f44118760e5b41d92d0",
+      "frames": 144000,
+      "peak": 0.230396,
+      "rms": 0.063151
+    },
+    "bars_strike": {
+      "sha256": "8b0abf11ac22bb91e9eacce1762dc0cab26081e8e6f39fda23e0f6b24b2aaa9c",
+      "frames": 144000,
+      "peak": 0.11361,
+      "rms": 0.042158
+    },
+    "bars_sustain_brake": {
+      "sha256": "da0c0391e88eb1d2a5cfba222459491b60d5a672e16bdf436f0ce895e3989e2b",
+      "frames": 144000,
+      "peak": 0.114636,
+      "rms": 0.035562
+    },
+    "bars_vibrato": {
+      "sha256": "036ffbfd25c38b428318b18334e81e29ebd50465725f7f27af22973080b45127",
+      "frames": 144000,
+      "peak": 0.25626,
+      "rms": 0.140087
+    }
+  }
+}

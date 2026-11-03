@@ -1,0 +1,8 @@
+renders/
+build/
+node_modules/
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.env
+*.log

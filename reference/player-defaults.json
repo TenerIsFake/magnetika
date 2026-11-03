@@ -1,0 +1,47 @@
+{
+  "source_sha256": "cd866257a0e10b70729e3f3160532f3a65bec2033600ca03bf1519da6ba820cc",
+  "glass": {
+    "Q2": 3500,
+    "split": 0.8,
+    "r3": 2.78,
+    "Q3": 2800,
+    "N": 2.5,
+    "dmu": 0.45,
+    "vs": 0.2,
+    "breath": 0.3,
+    "fingerSpeed": 3.8,
+    "G": 0.8,
+    "Gb": 1.5,
+    "Fmax": 0.06,
+    "vset": 0.3,
+    "vibRate": 5.5,
+    "Fvib": 0.3,
+    "spin": 1,
+    "kappa": 0.35,
+    "listen": 0,
+    "master": 0.6
+  },
+  "bars": {
+    "Q1": 2500,
+    "Q2": 1500,
+    "ratio": 4,
+    "strikeF": 25,
+    "contact": 2,
+    "strikePos": 0.3,
+    "G": 0.8,
+    "Gb": 1.5,
+    "Fmax": 0.5,
+    "vset": 0.2,
+    "vibRate": 5.5,
+    "Fvib": 0.5,
+    "listen": 0,
+    "master": 0.6
+  },
+  "perf": {
+    "vibDepth": 0,
+    "rot": 0,
+    "trimAmt": 1,
+    "bend": 0,
+    "pressure": 1
+  }
+}

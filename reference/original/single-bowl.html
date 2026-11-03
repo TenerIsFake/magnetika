@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Rotating-mode glass — physical prototype</title>
+<style>
+  :root{
+    --bg:#EDF1F2; --ink:#1B2A30; --mute:#5E7078; --line:#C9D4D8;
+    --glass:#5C93A3; --teal:#1E7487; --amber:#B77A22; --rose:#A0455A;
+    --panel:#F7F9FA;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
+  main{max-width:720px;margin:0 auto;padding:14px 14px 48px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:4px 0 2px}
+  p.lead{margin:0 0 12px;color:var(--mute);font-size:15px}
+  .stage{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+  canvas{display:block;width:100%;height:auto}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:rgba(237,241,242,.82);backdrop-filter:blur(2px)}
+  .overlay button{font:inherit;font-size:18px;padding:12px 22px;border-radius:999px;border:0;
+    background:var(--teal);color:#fff;cursor:pointer}
+  .overlay button:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
+  .readout{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:10px 0 6px;font-size:13px;color:var(--mute)}
+  .readout b{display:block;color:var(--ink);font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 14px}
+  button.chip{font:inherit;font-size:15px;padding:8px 14px;border-radius:999px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);cursor:pointer}
+  button.chip[aria-pressed="true"]{background:var(--teal);border-color:var(--teal);color:#fff}
+  section{border-top:1px solid var(--line);padding:12px 0 4px}
+  section h2{font-size:16px;font-weight:600;margin:0 0 6px}
+  section h2 span{color:var(--mute);font-weight:400;font-size:14px;margin-left:6px}
+  .ctl{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;margin:6px 0}
+  .ctl label{font-size:15px}
+  .ctl output{font-size:14px;color:var(--mute);font-variant-numeric:tabular-nums;min-width:74px;text-align:right}
+  .ctl input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--teal);margin:0;height:28px}
+  details{margin-top:18px;color:var(--mute);font-size:14px}
+  details summary{cursor:pointer;color:var(--ink)}
+  details p{margin:8px 0}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:13px;color:var(--mute);margin-top:6px}
+  .legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}
+  @media (prefers-reduced-motion:reduce){.overlay{backdrop-filter:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Rotating-mode glass</h1>
+  <p class="lead">A fixed glass bowl, modeled as its two degenerate (2,0) modes plus the (3,0) pair. Rub the rim with a finger, or let the coils sustain and spin the pattern.</p>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" width="720" height="600"></canvas>
+    <div class="overlay" id="overlay"><button id="start">Start audio, then rub the rim</button></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--amber)"></i>vibration envelope</span>
+    <span><i style="background:var(--glass)"></i>rim, instantaneous</span>
+    <span><i style="background:var(--teal)"></i>coil drive axis</span>
+    <span><i style="background:var(--rose)"></i>ears</span>
+  </div>
+
+  <div class="readout">
+    <div>pattern angle<b id="rPsi">–</b></div>
+    <div>traveling<b id="rTrav">–</b></div>
+    <div>level<b id="rAmp">–</b></div>
+    <div>mode A / B<b id="rF">–</b></div>
+  </div>
+
+  <div class="bar">
+    <button class="chip" id="drive" aria-pressed="false">Coil drive off</button>
+    <button class="chip" id="kick">Kick the bowl</button>
+    <button class="chip" id="n3" aria-pressed="false">Coils on (2,0) only</button>
+    <button class="chip" id="stop">Silence</button>
+  </div>
+
+  <section>
+    <h2>Material<span>sets Q, mode split, and pitch below</span></h2>
+    <div class="bar" id="materials"></div>
+    <p id="matNote" style="margin:0;color:var(--mute);font-size:14px"></p>
+  </section>
+  <div id="controls"></div>
+
+  <details>
+    <summary>What is and isn't in the model</summary>
+    <p>Each mode is a damped oscillator on a 20 g modal mass. The (2,0) pair is split by the amount you set, with principal axes fixed at 0° and 90° (the vertical and horizontal of the picture), so a finger or drive at any other angle excites both and you hear them beat. The (3,0) pair sits at the ratio you set and gets the same split scaled.</p>
+    <p>The finger is a normal load with velocity-weakening friction, μ(v) = μ<sub>k</sub> + (μ<sub>s</sub>−μ<sub>k</sub>)·e<sup>−|v|/v<sub>s</sub></sup>, acting on the rim's tangential velocity. Tangential motion follows the inextensional ring relation v<sub>t</sub> = −∫w dθ, which is why the finger couples with weight 1/n to each mode. Stick-slip emerges; it is not scripted. The finger's own speed comes from your pointer.</p>
+    <p>The eight rim magnets and coils are modeled as a force along the drive axis proportional to the sensed velocity along that axis (regenerative feedback), saturated at a maximum coil force. A regulator scales the gain down as the rim velocity approaches a setpoint, as any real sustain loop must, otherwise a high-Q bowl runs away. That is what a locked drive does once it has tracked resonance; the loop dynamics of the PLL itself are not simulated. Negative gain is the same coil used as a brake. A drive component in phase with displacement is an electronic spring; the vibrato control wobbles the (2,0) stiffness that way, and the spring force is capped, so the pitch swing you actually get shrinks as the note gets louder. (A DC bias on air coils turned out to be worth well under a cent, so it is gone.) Rotating the drive axis slowly is what makes the standing pattern precess.</p>
+    <p>The trim control applies the electronic spring anisotropically, along the bowl's stiff and soft axes, cancelling the set fraction of the A–B split; on a turning bowl it tracks the axes as they rotate. The same rotation also averages the split away by itself once the spin rate exceeds the split, so beating is mostly a fixed-bowl problem.</p>
+    <p>Turning bowls are modeled in the lab frame: the principal axes of the split rotate with the glass, the rim slides under the finger at the spindle speed, and a Coriolis coupling between the two modes makes a free pattern precess at the Bryan factor times the spin rate, the effect a hemispherical resonator gyroscope reads out. With the (3,0) coil option on, the same regenerative law is applied to the (3,0) pair.</p>
+    <p>Sound is the rim acceleration sampled at two ear angles 30° apart, which is the correct angular dependence for a quadrupole and sextupole radiator. Not modeled: air loading on the modes, higher modes, the finger's added damping and mass, thermal drift, and a real magnetic circuit.</p>
+  </details>
+</main>
+
+<script>
+/* ---------- physics core, shared between AudioWorklet and fallback ---------- */
+const PHYS_SRC = `
+class BowlPhysics {
+  constructor(sr){
+    this.sr=sr; this.sub=2; this.dt=1/(sr*this.sub);
+    this.p={f0:660,Q2:2500,split:0.4,r3:2.78,Q3:1800,N:2.5,dmu:0.45,vs:0.2,breath:0.3,
+            driveOn:0,G:0.6,Fmax:0.02,rot:0.15,cents:0,listen:0,master:0.6,spin:0,kappa:0.35,n3ctl:0,vset:0.3,vibDepth:0,vibRate:5.5,Fvib:0.3,trim:0};
+    this.t=0;
+    this.venv=0;
+    this.alpha=0;
+    this.q=new Float64Array(4); this.v=new Float64Array(4); this.a=new Float64Array(4);
+    this.thF=0; this.thT=0; this.omF=0; this.N=0; this.NT=0; this.on=false;
+    this.psi=0; this.env=0; this.noiseLP=0;
+    this.acc={s1:0,s2:0,aa:0,bb:0,ab:0,L:0,n:0,Ft:0,vrel:0};
+    this.R=0.045; this.m=0.02; this.mu_k=0.35;
+  }
+  setParams(o){ Object.assign(this.p,o); }
+  finger(on,th,om){ this.on=on; this.thT=th; this.omF=om; }
+  kick(){ this.v[0]+=0.06; this.v[2]+=0.02; }
+  silence(){ this.q.fill(0); this.v.fill(0); this.env=0; }
+  step(){
+    const p=this.p, dt=this.dt, q=this.q, v=this.v, a=this.a, m=this.m;
+    const pull=Math.pow(2,p.cents/1200);
+    const w0=2*Math.PI*p.f0*pull, w3=w0*p.r3;
+    const dw2=2*Math.PI*p.split*pull, dw3=dw2*1.5;
+    // bowl spin: principal axes rotate with the glass (lab-frame modal coordinates)
+    const Om=p.spin*2*Math.PI; this.alpha+=Om*dt; if(this.alpha>Math.PI) this.alpha-=2*Math.PI;
+    const c4=Math.cos(4*this.alpha), s4=Math.sin(4*this.alpha), c6=Math.cos(6*this.alpha), s6=Math.sin(6*this.alpha);
+    // finger: angle lags target (5 ms), load ramps (15 ms)
+    let d=this.thT-this.thF; d=Math.atan2(Math.sin(d),Math.cos(d));
+    this.thF+=d*Math.min(1,dt/0.005);
+    this.NT=this.on?p.N:0; this.N+=(this.NT-this.N)*Math.min(1,dt/0.015);
+    const th=this.thF, s2=Math.sin(2*th), c2=Math.cos(2*th), s3t=Math.sin(3*th), c3t=Math.cos(3*th);
+    // tangential rim velocity at finger (inextensional: v_t = -∫w dθ), plus the rim passing under the finger
+    const vg = -v[0]*s2/2 + v[1]*c2/2 - v[2]*s3t/3 + v[3]*c3t/3;
+    const vf = (this.omF-Om)*this.R;
+    const vrel=vf-vg;
+    let Ft=0;
+    if(this.N>1e-4){
+      const mu = Math.tanh(vrel/0.002)*(this.mu_k + p.dmu*Math.exp(-Math.abs(vrel)/p.vs));
+      Ft=this.N*mu;
+    }
+    const Q2A=Ft*(-s2/2), Q2B=Ft*(c2/2), Q3A=Ft*(-s3t/3), Q3B=Ft*(c3t/3);
+    // coils: regenerative drive along axis psi, saturated; optionally also on the (3,0) pair
+    let FA=0,FB=0,F3A=0,F3B=0;
+    if(p.driveOn){
+      this.psi+=p.rot*2*Math.PI*dt;
+      const cp=Math.cos(2*this.psi), sp=Math.sin(2*this.psi);
+      const vpsi=v[0]*cp+v[1]*sp;
+      // amplitude regulator: the locked drive holds a setpoint instead of running away
+      const av=Math.abs(vpsi); this.venv = av>this.venv ? av : this.venv*(1-dt*30);
+      // bidirectional regulator: pulls the amplitude to the setpoint from either side
+      const geff = p.G>0 ? Math.max(-p.G, p.G*(1-this.venv/p.vset)) : p.G;
+      if(p.G>0){
+        const Fd=p.Fmax*Math.tanh(geff*vpsi/p.Fmax);
+        FA=Fd*cp; FB=Fd*sp;
+        if(p.n3ctl){ const c3p=Math.cos(3*this.psi), s3p=Math.sin(3*this.psi);
+          const v3=v[2]*c3p+v[3]*s3p; const F3=0.7*p.Fmax*Math.tanh(geff*v3/(0.7*p.Fmax)); F3A=F3*c3p; F3B=F3*s3p; }
+      } else {
+        // braking: both coil sets oppose the sensed velocity vector, magnitude limited
+        const vm=Math.hypot(v[0],v[1])+1e-12, Fb=p.Fmax*Math.tanh(-p.G*vm/p.Fmax);
+        FA=-Fb*v[0]/vm; FB=-Fb*v[1]/vm;
+        if(p.n3ctl){ const v3m=Math.hypot(v[2],v[3])+1e-12, F3=0.7*p.Fmax*Math.tanh(-p.G*v3m/(0.7*p.Fmax)); F3A=-F3*v[2]/v3m; F3B=-F3*v[3]/v3m; }
+      }
+    }
+    // electronic spring: drive in phase with displacement shifts the (2,0) stiffness -> vibrato
+    let FkA=0,FkB=0;
+    if(p.driveOn && p.vibDepth>0){
+      this.t+=dt; const cents=p.vibDepth*Math.sin(2*Math.PI*p.vibRate*this.t);
+      const dk=-2*m*w0*w0*(Math.pow(2,cents/1200)-1);
+      const fa=dk*q[0], fb=dk*q[1], fm=Math.hypot(fa,fb)+1e-12, fl=p.Fvib*Math.tanh(fm/p.Fvib);
+      FkA=fa*fl/fm; FkB=fb*fl/fm;
+    }
+    // electronic trimming: anisotropic spring that cancels a fraction of the split, tracking the bowl's axes
+    if(p.driveOn && p.trim>0){
+      const kt=m*w0*dw2*p.trim;
+      const ta=kt*(c4*q[0]+s4*q[1]), tb=kt*(s4*q[0]-c4*q[1]);
+      const tm=Math.hypot(ta,tb)+1e-12, tl=p.Fvib*Math.tanh(tm/p.Fvib);
+      FkA+=ta*tl/tm; FkB+=tb*tl/tm;
+    }
+    // Bryan (Coriolis) coupling: pattern precesses at kappa*spin in the lab frame
+    const g2=2*(2*p.kappa*Om), g3=2*(3*p.kappa*0.55*Om);
+    a[0]=(Q2A+FA+FkA)/m - w0*w0*q[0] - w0*dw2*( c4*q[0]+s4*q[1]) - (w0/p.Q2)*v[0] - g2*v[1];
+    a[1]=(Q2B+FB+FkB)/m - w0*w0*q[1] - w0*dw2*( s4*q[0]-c4*q[1]) - (w0/p.Q2)*v[1] + g2*v[0];
+    a[2]=(Q3A+F3A)/m - w3*w3*q[2] - w3*dw3*( c6*q[2]+s6*q[3]) - (w3/p.Q3)*v[2] - g3*v[3];
+    a[3]=(Q3B+F3B)/m - w3*w3*q[3] - w3*dw3*( s6*q[2]-c6*q[3]) - (w3/p.Q3)*v[3] + g3*v[2];
+    for(let i=0;i<4;i++){ v[i]+=a[i]*dt; q[i]+=v[i]*dt; }
+    this.Ft=Ft; this.vrel=vrel;
+  }
+  render(L,R,n){
+    const p=this.p, ac=this.acc, a=this.a, q=this.q, v=this.v;
+    const dth=0.26, thL=p.listen-dth, thR=p.listen+dth;
+    const c2L=Math.cos(2*thL), s2L=Math.sin(2*thL), c3L=Math.cos(3*thL), s3L=Math.sin(3*thL);
+    const c2R=Math.cos(2*thR), s2R=Math.sin(2*thR), c3R=Math.cos(3*thR), s3R=Math.sin(3*thR);
+    const g2=3e-4*p.master, g3=1.8e-4*p.master;
+    for(let i=0;i<n;i++){
+      for(let s=0;s<this.sub;s++) this.step();
+      // friction noise: slip-correlated, low-passed
+      let nz=0;
+      if(this.N>1e-4){
+        const slip=Math.min(1,Math.abs(this.vrel)/0.15);
+        const wn=(Math.random()*2-1);
+        this.noiseLP+=(wn-this.noiseLP)*0.25;
+        nz=this.noiseLP*this.N*slip*p.breath*0.12*p.master;
+      }
+      let l=g2*(a[0]*c2L+a[1]*s2L)+g3*(a[2]*c3L+a[3]*s3L)+nz;
+      let r=g2*(a[0]*c2R+a[1]*s2R)+g3*(a[2]*c3R+a[3]*s3R)+nz;
+      L[i]=Math.tanh(l); R[i]=Math.tanh(r);
+      const e=Math.abs(l)+Math.abs(r);
+      this.env = e>this.env ? e : this.env*0.9995;
+      ac.s1+=q[0]*q[0]-q[1]*q[1]; ac.s2+=2*q[0]*q[1];
+      ac.aa+=q[0]*q[0]; ac.bb+=q[1]*q[1]; ac.ab+=q[0]*q[1];
+      ac.L+=q[0]*v[1]-q[1]*v[0];
+      ac.Ft+=this.Ft; ac.vrel+=this.vrel; ac.n++;
+    }
+  }
+  snapshot(){
+    const ac=this.acc, n=Math.max(1,ac.n);
+    const wA=2*Math.PI*this.p.f0;
+    const E=ac.aa+ac.bb;                       // ~ 2 * mean square amplitude
+    const trav = E>1e-30 ? Math.min(1,Math.abs(ac.L/n)/(wA*E/n)) : 0;
+    const out={q:Array.from(this.q),s1:ac.s1/n,s2:ac.s2/n,aa:ac.aa/n,bb:ac.bb/n,ab:ac.ab/n,
+      trav,env:this.env,psi:this.psi,thF:this.thF,N:this.N,on:this.on};
+    ac.s1=ac.s2=ac.aa=ac.bb=ac.ab=ac.L=ac.Ft=ac.vrel=0; ac.n=0;
+    return out;
+  }
+}`;
+
+const WORKLET_SRC = PHYS_SRC + `
+class BowlProc extends AudioWorkletProcessor{
+  constructor(){ super(); this.b=new BowlPhysics(sampleRate); this.cnt=0;
+    this.port.onmessage=e=>{const d=e.data;
+      if(d.t==='p') this.b.setParams(d.p);
+      else if(d.t==='f') this.b.finger(d.on,d.th,d.om);
+      else if(d.t==='k') this.b.kick();
+      else if(d.t==='s') this.b.silence(); };
+  }
+  process(inp,out){ const o=out[0]; if(!o||o.length<2) return true;
+    this.b.render(o[0],o[1],o[0].length); this.cnt+=o[0].length;
+    if(this.cnt>=256){ this.cnt=0; this.port.postMessage(this.b.snapshot()); }
+    return true; }
+}
+registerProcessor('bowl',BowlProc);`;
+
+/* ---------- audio setup ---------- */
+let ctx=null, node=null, fallback=null, send=()=>{};
+let state=null;
+
+async function startAudio(){
+  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  try{
+    const url=URL.createObjectURL(new Blob([WORKLET_SRC],{type:'application/javascript'}));
+    await ctx.audioWorklet.addModule(url);
+    node=new AudioWorkletNode(ctx,'bowl',{outputChannelCount:[2]});
+    node.port.onmessage=e=>{state=e.data;};
+    node.connect(ctx.destination);
+    send=m=>node.port.postMessage(m);
+  }catch(err){
+    // fallback: same physics on the main thread
+    const B=new Function(PHYS_SRC+';return BowlPhysics;')();
+    fallback=new B(ctx.sampleRate);
+    const sp=ctx.createScriptProcessor(1024,0,2);
+    sp.onaudioprocess=ev=>{const L=ev.outputBuffer.getChannelData(0),R=ev.outputBuffer.getChannelData(1);
+      fallback.render(L,R,L.length); state=fallback.snapshot();};
+    sp.connect(ctx.destination);
+    send=m=>{ if(m.t==='p') fallback.setParams(m.p); else if(m.t==='f') fallback.finger(m.on,m.th,m.om);
+      else if(m.t==='k') fallback.kick(); else if(m.t==='s') fallback.silence(); };
+  }
+  await ctx.resume();
+  pushAllParams();
+}
+
+/* ---------- controls ---------- */
+const SPEC=[
+  {h:'Glass',sub:'the bowl itself',items:[
+    ['f0','(2,0) frequency',300,1500,1,660,'Hz'],
+    ['Q2','(2,0) quality factor',100,100000,50,2500,''],
+    ['split','A–B frequency split',0,5,0.05,0.4,'Hz'],
+    ['r3','(3,0) / (2,0) ratio',2.3,3.2,0.01,2.78,'×'],
+    ['Q3','(3,0) quality factor',100,100000,50,1800,''],
+  ]},
+  {h:'Finger',sub:'wet skin on the rim',items:[
+    ["N","normal load",0.2,6,0.05,2.5,"N"],
+    ['dmu','μs − μk (wetness)',0,0.8,0.01,0.45,''],
+    ["vs","weakening velocity",0.02,0.5,0.005,0.2,"m/s"],
+    ['breath','friction noise',0,1,0.05,0.3,''],
+  ]},
+  {h:'Coils',sub:'eight rim magnets',items:[
+    ['G','feedback gain (negative brakes)',-2,2,0.02,0.6,'N·s/m'],
+    ["Fmax","coil force limit",0.005,0.2,0.005,0.02,"N"],
+    ['rot','drive-axis rotation',-2,2,0.01,0.15,'rev/s'],
+    ['vibDepth','vibrato depth (electronic spring)',0,40,1,0,'¢'],
+    ['vibRate','vibrato rate',1,8,0.1,5.5,'Hz'],
+    ['Fvib','spring force limit',0.02,1,0.01,0.3,'N'],
+    ['trim','electronic split trim',0,1,0.01,0,'× split'],
+  ]},
+  {h:'Spindle',sub:'traditional turning bowls',items:[
+    ['spin','bowl rotation',-2,2,0.05,0,'rev/s'],
+    ['kappa','Bryan factor',0,0.5,0.01,0.35,''],
+  ]},
+  {h:'Listener',sub:'',items:[
+    ['listen','ear angle around the bowl',-180,180,1,0,'°'],
+    ['master','level',0,1,0.01,0.6,''],
+  ]},
+];
+const params={driveOn:0,n3ctl:0,cents:0};
+const host=document.getElementById('controls');
+for(const g of SPEC){
+  const sec=document.createElement('section');
+  sec.innerHTML=`<h2>${g.h}${g.sub?`<span>${g.sub}</span>`:''}</h2>`;
+  for(const [id,label,min,max,step,def,unit] of g.items){
+    params[id]=def;
+    const d=document.createElement('div'); d.className='ctl';
+    d.innerHTML=`<label for="${id}">${label}</label><output id="o_${id}"></output>
+      <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${def}">`;
+    sec.appendChild(d);
+    const inp=d.querySelector('input'), o=d.querySelector('output');
+    const show=()=>{o.textContent=(+inp.value).toString()+(unit?' '+unit:'');};
+    show();
+    inp.addEventListener('input',()=>{show(); setParam(id,+inp.value);});
+  }
+  host.appendChild(sec);
+}
+function setParam(id,val){
+  params[id]=val;
+  const o={}; o[id]=(id==='listen')?val*Math.PI/180:val;
+  send({t:'p',p:o});
+}
+function pushAllParams(){
+  const o=Object.assign({},params); o.listen=params.listen*Math.PI/180;
+  send({t:'p',p:o});
+}
+const driveBtn=document.getElementById('drive');
+driveBtn.addEventListener('click',()=>{
+  params.driveOn=params.driveOn?0:1;
+  driveBtn.setAttribute('aria-pressed',String(!!params.driveOn));
+  driveBtn.textContent=params.driveOn?'Coil drive on':'Coil drive off';
+  send({t:'p',p:{driveOn:params.driveOn}});
+});
+document.getElementById('kick').addEventListener('click',()=>send({t:'k'}));
+const n3Btn=document.getElementById('n3');
+n3Btn.addEventListener('click',()=>{
+  params.n3ctl=params.n3ctl?0:1;
+  n3Btn.setAttribute('aria-pressed',String(!!params.n3ctl));
+  n3Btn.textContent=params.n3ctl?'Coils on (2,0) and (3,0)':'Coils on (2,0) only';
+  send({t:'p',p:{n3ctl:params.n3ctl}});
+});
+document.getElementById('stop').addEventListener('click',()=>send({t:'s'}));
+document.getElementById('start').addEventListener('click',async()=>{
+  await startAudio(); document.getElementById('overlay').style.display='none';
+});
+
+/* ---------- material presets ---------- */
+const MATERIALS=[
+  {n:'Soda-lime glass',Q2:1500,Q3:1200,split:1.5,fs:1.00,note:'Cheap bowls. Q in the low thousands; a 1–2 Hz mode split is typical, so the note beats unless trimmed.'},
+  {n:'Soda-lime + enamel band',Q2:1300,Q3:1000,split:1.5,fs:0.97,Fmax:0.06,note:'Bought bowls, ferrite enamel fired at ~580 °C: the easiest joint in the project. Two seconds of ring; the coils do the sustaining, and the trim control cancels the split.'},
+  {n:'Lead crystal + enamel band',Q2:4000,Q3:3000,split:1.0,fs:0.85,Fmax:0.06,note:'The historical armonica glass (24 % PbO): denser and softer, so lower pitch for the same shape, with a clear ring between soda-lime and borosilicate.'},
+  {n:'Borosilicate',Q2:3500,Q3:2800,split:0.8,fs:0.99,note:'What you could blow yourself. Higher Q than soda-lime, slightly lower pitch for the same shape.'},
+  {n:'Borosilicate + bonded magnets',Q2:1800,Q3:1500,split:1.2,fs:0.97,note:'Eight NdFeB magnets on the rim: mass loading drops pitch ~3 %, the adhesive halves Q, and any mismatch in magnet mass widens the split.'},
+  {n:'Borosilicate + ferrite frit ring',Q2:3000,Q3:2400,split:0.8,fs:0.96,Fmax:0.06,note:'A fired, radially magnetized ferrite band on the rim. Axisymmetric, so no added split and it works on a turning bowl; about a third the coil force of NdFeB per ampere-turn; force limit here assumes paired inner and outer 6 mm coils.'},
+  {n:'Fused silica + ferrite frit ring',Q2:40000,Q3:28000,split:0.1,fs:1.02,Fmax:0.06,note:'The end-product combination: long ring, clean precession, weak but sufficient coil force.'},
+  {n:'Fused silica',Q2:60000,Q3:40000,split:0.1,fs:1.06,note:'The HRG material. Tens of seconds of ring, almost no split, so precession is clean. Cannot be blown with a hobby torch.'},
+  {n:'Magnetite glass-ceramic',Q2:400,Q3:300,split:0.8,fs:1.02,note:'A bulk magnetic composite. Weak coupling and heavy internal friction from the dispersed crystals: dull, short notes.'},
+  {n:'Fe-based metallic glass',Q2:150,Q3:120,split:0.5,fs:0.93,note:'Ferromagnetic and castable, but magnetoelastic damping makes it a thud, not a bell.'},
+];
+const F_BASE=660;
+const matHost=document.getElementById('materials');
+MATERIALS.forEach((m,i)=>{
+  const b=document.createElement('button'); b.className='chip'; b.textContent=m.n; b.setAttribute('aria-pressed',i===1?'true':'false');
+  b.addEventListener('click',()=>applyMaterial(i)); matHost.appendChild(b);
+});
+function setSlider(id,val){ const inp=document.getElementById(id); inp.value=val; inp.dispatchEvent(new Event('input')); }
+function applyMaterial(i){
+  const m=MATERIALS[i];
+  [...matHost.children].forEach((c,j)=>c.setAttribute('aria-pressed',String(i===j)));
+  document.getElementById('matNote').textContent=m.note;
+  setSlider('Q2',m.Q2); setSlider('Q3',m.Q3); setSlider('split',m.split); setSlider('f0',Math.round(F_BASE*m.fs));
+  setSlider('Fmax',m.Fmax||0.02);
+}
+applyMaterial(1);
+
+/* ---------- touch on the rim ---------- */
+const cv=document.getElementById('cv'), g=cv.getContext('2d');
+const stage=document.getElementById('stage');
+let touch={on:false,th:0,om:0,t:0,id:null};
+function angleOf(ev){
+  const r=cv.getBoundingClientRect();
+  const x=(ev.clientX-r.left)/r.width*cv.width - cv.width/2;
+  const y=(ev.clientY-r.top)/r.height*cv.height - cv.height/2;
+  return Math.atan2(y,x);
+}
+stage.addEventListener('pointerdown',ev=>{
+  if(!ctx) return;
+  if(ctx.state!=='running') ctx.resume();
+  touch.on=true; touch.id=ev.pointerId; touch.th=angleOf(ev); touch.om=0; touch.t=performance.now();
+  stage.setPointerCapture(ev.pointerId);
+  send({t:'f',on:true,th:touch.th,om:0});
+});
+stage.addEventListener('pointermove',ev=>{
+  if(!touch.on||ev.pointerId!==touch.id) return;
+  const th=angleOf(ev), now=performance.now(), dt=(now-touch.t)/1000;
+  if(dt<0.004) return;
+  let d=th-touch.th; d=Math.atan2(Math.sin(d),Math.cos(d));
+  const om=d/dt;
+  touch.om+= (om-touch.om)*0.35;           // smooth the pointer's angular velocity
+  touch.th=th; touch.t=now;
+  send({t:'f',on:true,th:th,om:touch.om});
+});
+function lift(ev){ if(!touch.on||ev.pointerId!==touch.id) return;
+  touch.on=false; send({t:'f',on:false,th:touch.th,om:0}); }
+stage.addEventListener('pointerup',lift); stage.addEventListener('pointercancel',lift);
+// if the pointer stops moving but stays down, velocity decays
+setInterval(()=>{ if(touch.on && performance.now()-touch.t>60){ touch.om*=0.6; send({t:'f',on:true,th:touch.th,om:touch.om}); } },60);
+
+/* ---------- drawing ---------- */
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let vis={s1:0,s2:0,aa:0,bb:0,ab:0,trav:0,env:0};
+function draw(){
+  requestAnimationFrame(draw);
+  const W=cv.width,H=cv.height,cx=W/2,cy=H/2,R0=Math.min(W,H)*0.36;
+  g.clearRect(0,0,W,H);
+  const s=state;
+  if(s){ // smooth the slow quantities
+    for(const k of ['s1','s2','aa','bb','ab','trav','env']) vis[k]+=(s[k]-vis[k])*0.25;
+  }
+  // principal axes (faint) when split is nonzero
+  g.strokeStyle='rgba(27,42,48,.12)'; g.lineWidth=1; g.setLineDash([4,6]);
+  if(params.split>0){ g.beginPath(); g.moveTo(cx-R0*1.25,cy); g.lineTo(cx+R0*1.25,cy);
+    g.moveTo(cx,cy-R0*1.25); g.lineTo(cx,cy+R0*1.25); g.stroke(); }
+  g.setLineDash([]);
+  // envelope lobes: E(θ) = sqrt(<qA²>cos²2θ + <qB²>sin²2θ + 2<qAqB>cos2θ sin2θ)
+  const Eref=Math.sqrt(Math.max(vis.aa+vis.bb,1e-16));
+  const K=R0*0.22;
+  g.beginPath();
+  for(let i=0;i<=180;i++){
+    const th=i/180*2*Math.PI, c=Math.cos(2*th), sn=Math.sin(2*th);
+    const E=Math.sqrt(Math.max(0,vis.aa*c*c+vis.bb*sn*sn+2*vis.ab*c*sn))/Eref;
+    const r=R0+K*E; const x=cx+r*Math.cos(th), y=cy+r*Math.sin(th);
+    i?g.lineTo(x,y):g.moveTo(x,y);
+  }
+  g.closePath();
+  g.fillStyle='rgba(183,122,34,.16)'; g.fill();
+  g.strokeStyle='rgba(183,122,34,.75)'; g.lineWidth=1.5; g.stroke();
+  // rim, instantaneous
+  const qq=s?s.q:[0,0,0,0];
+  const qn=Math.max(Math.hypot(qq[0],qq[1],qq[2],qq[3]),Eref*1.2,1e-16);
+  g.beginPath();
+  for(let i=0;i<=180;i++){
+    const th=i/180*2*Math.PI;
+    const w=(qq[0]*Math.cos(2*th)+qq[1]*Math.sin(2*th)+qq[2]*Math.cos(3*th)+qq[3]*Math.sin(3*th))/qn;
+    const r=R0+K*0.9*(reduce?0:w); const x=cx+r*Math.cos(th), y=cy+r*Math.sin(th);
+    i?g.lineTo(x,y):g.moveTo(x,y);
+  }
+  g.closePath(); g.strokeStyle='#5C93A3'; g.lineWidth=3; g.stroke();
+  // inner glass wall suggestion
+  g.beginPath(); g.arc(cx,cy,R0*0.82,0,2*Math.PI); g.strokeStyle='rgba(92,147,163,.25)'; g.lineWidth=1; g.stroke();
+  // drive axis
+  if(params.driveOn && s){
+    const ps=s.psi; g.strokeStyle='#1E7487'; g.lineWidth=2; g.setLineDash([8,6]);
+    g.beginPath(); g.moveTo(cx-R0*1.3*Math.cos(ps),cy-R0*1.3*Math.sin(ps)); g.lineTo(cx+R0*1.3*Math.cos(ps),cy+R0*1.3*Math.sin(ps)); g.stroke();
+    g.setLineDash([]);
+  }
+  // ears
+  const la=params.listen*Math.PI/180;
+  for(const dd of [-0.26,0.26]){ const a=la+dd, r=R0*1.42;
+    g.beginPath(); g.arc(cx+r*Math.cos(a),cy+r*Math.sin(a),6,0,2*Math.PI); g.fillStyle='#A0455A'; g.fill(); }
+  // finger
+  if(s && s.on){ const a=s.thF, r=R0*1.02;
+    g.beginPath(); g.arc(cx+r*Math.cos(a),cy+r*Math.sin(a),11,0,2*Math.PI); g.fillStyle='rgba(27,42,48,.85)'; g.fill(); }
+  // readouts
+  if(s){
+    const psi=0.25*Math.atan2(vis.s2,vis.s1)*180/Math.PI;
+    document.getElementById('rPsi').textContent=(vis.env>1e-4?psi.toFixed(0)+'°':'–');
+    document.getElementById('rTrav').textContent=(vis.env>1e-4?(vis.trav*100).toFixed(0)+' %':'–');
+    document.getElementById('rAmp').textContent=(20*Math.log10(Math.max(vis.env,1e-5))).toFixed(0)+' dB';
+    const pull=Math.pow(2,params.cents/1200);
+    document.getElementById('rF').textContent=((params.f0+params.split/2)*pull).toFixed(1)+' / '+((params.f0-params.split/2)*pull).toFixed(1);
+  }
+}
+draw();
+</script>
+</body>
+</html>
