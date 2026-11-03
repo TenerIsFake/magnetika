@@ -184,7 +184,24 @@ void BowlPhysics::step() {
     vrel_ = vrel;
 }
 
+// Departure from the JS (which fixes sub = 2): the explicit integrator is stable
+// only while omega*dt < 2, and the (3,0) pair at r3 = 2.78 crosses that near the top
+// of the MIDI range (glass >= 125 at 48 kHz, lower at 44.1 kHz). A diverging voice
+// turns to NaN and, since NaN never decays below the free threshold, silences the
+// mix for good. Substeps double until omega_max*dt <= 1. In the reference range
+// omega_max*dt stays below 0.4 with sub = 2, so dt is bit-for-bit the JS value.
+void BowlPhysics::updateSubsteps() {
+    const double wmax = 2 * PI * p.f0 * (p.r3 > 1 ? p.r3 : 1);
+    int sub = 2;
+    while (wmax / (sr_ * sub) > 1.0 && sub < 64) sub *= 2;
+    if (sub != sub_) {
+        sub_ = sub;
+        dt_ = 1.0 / (sr_ * sub);
+    }
+}
+
 void BowlPhysics::render(float* L, float* R, int n, bool add) {
+    updateSubsteps();
     const double dth = 0.26, thL = p.listen - dth, thR = p.listen + dth;
     const double c2L = std::cos(2 * thL), s2L = std::sin(2 * thL), c3L = std::cos(3 * thL), s3L = std::sin(3 * thL);
     const double c2R = std::cos(2 * thR), s2R = std::sin(2 * thR), c3R = std::cos(3 * thR), s3R = std::sin(3 * thR);

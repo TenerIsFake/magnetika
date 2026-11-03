@@ -98,7 +98,20 @@ void BarPhysics::step() {
     }
 }
 
+// See BowlPhysics::updateSubsteps. Bars diverge from MIDI 119 at 48 kHz, where
+// the 4x partial passes omega*dt = 2 with the JS's fixed sub = 2.
+void BarPhysics::updateSubsteps() {
+    const double wmax = 2 * PI * p.f0 * (p.ratio > 1 ? p.ratio : 1);
+    int sub = 2;
+    while (wmax / (sr_ * sub) > 1.0 && sub < 64) sub *= 2;
+    if (sub != sub_) {
+        sub_ = sub;
+        dt_ = 1.0 / (sr_ * sub);
+    }
+}
+
 void BarPhysics::render(float* L, float* R, int n, bool add) {
+    updateSubsteps();
     const double g = 1.2e-3 * p.master, pan = 0.5 + 0.5 * std::sin(p.listen);
     const double gl = std::sqrt(1 - pan) * 1.2, gr = std::sqrt(pan) * 1.2;
     for (int i = 0; i < n; ++i) {

@@ -6,6 +6,7 @@
 // --armed turns on "coils always armed", which the reference does not have; it
 // is for listening, not for comparison.
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -66,7 +67,9 @@ std::vector<Scenario> readTrace(const std::string& path) {
             if (!cur) fail("call outside a scenario", line);
             Call c;
             c.line = line;
-            c.at = std::stoll(first);
+            char* end = nullptr;
+            c.at = std::strtoll(first.c_str(), &end, 10);
+            if (end == first.c_str() || *end != '\0' || c.at < 0) fail("bad sample position: " + first, line);
             ss >> c.op;
             for (std::string a; ss >> a;) c.args.push_back(a);
             cur->calls.push_back(std::move(c));
@@ -80,6 +83,12 @@ double num(const std::string& s, int line) {
     const double v = std::strtod(s.c_str(), &end);
     if (end == s.c_str() || *end != '\0') fail("not a number: " + s, line);
     return v;
+}
+
+int midiNote(const std::string& s, int line) {
+    const double v = num(s, line);
+    if (!(v >= 0 && v <= 127) || v != std::floor(v)) fail("MIDI note must be an integer 0..127: " + s, line);
+    return static_cast<int>(v);
 }
 
 Instrument instrument(const std::string& s, int line) {
@@ -115,10 +124,10 @@ void apply(Synth& synth, const Call& c) {
         synth.setInst(instrument(c.args[0], c.line));
     } else if (c.op == "noteOn") {
         if (c.args.size() != 2) fail("noteOn takes midi and velocity", c.line);
-        synth.noteOn(static_cast<int>(num(c.args[0], c.line)), num(c.args[1], c.line));
+        synth.noteOn(midiNote(c.args[0], c.line), num(c.args[1], c.line));
     } else if (c.op == "noteOff") {
         if (c.args.size() != 1) fail("noteOff takes midi", c.line);
-        synth.noteOff(static_cast<int>(num(c.args[0], c.line)));
+        synth.noteOff(midiNote(c.args[0], c.line));
     } else {
         fail("unknown call: " + c.op, c.line);
     }
@@ -126,6 +135,7 @@ void apply(Synth& synth, const Call& c) {
 
 void writeWav(const std::string& path, const std::vector<float>& L, const std::vector<float>& R) {
     std::ofstream f(path, std::ios::binary);
+    if (!f) { std::cerr << "cannot write " << path << "\n"; std::exit(2); }
     auto u32 = [&](std::uint32_t v) { f.write(reinterpret_cast<const char*>(&v), 4); };
     auto u16 = [&](std::uint16_t v) { f.write(reinterpret_cast<const char*>(&v), 2); };
     const auto n = static_cast<std::uint32_t>(L.size()), data = 8 * n;
@@ -137,6 +147,7 @@ void writeWav(const std::string& path, const std::vector<float>& L, const std::v
         f.write(reinterpret_cast<const char*>(&L[i]), 4);
         f.write(reinterpret_cast<const char*>(&R[i]), 4);
     }
+    if (!f) { std::cerr << "write failed: " << path << "\n"; std::exit(2); }
 }
 
 } // namespace
@@ -146,8 +157,13 @@ int main(int argc, char** argv) {
         std::cerr << "usage: render-cli <trace.txt> <out-dir> [--armed]\n";
         return 2;
     }
-    const bool armed = argc > 3 && std::string(argv[3]) == "--armed";
+    bool armed = false;
+    for (int i = 3; i < argc; ++i) {
+        if (std::string(argv[i]) == "--armed") armed = true;
+        else { std::cerr << "unknown option: " << argv[i] << "\n"; return 2; }
+    }
     const auto scenarios = readTrace(argv[1]);
+    if (scenarios.empty()) { std::cerr << "no scenarios in " << argv[1] << "\n"; return 2; }
     for (const auto& sc : scenarios) {
         Synth synth(kSampleRate);
         synth.setCoilsArmed(armed);
@@ -155,7 +171,8 @@ int main(int argc, char** argv) {
         size_t k = 0;
         for (long long i = 0; i < sc.frames; i += kBlock) {
             while (k < sc.calls.size() && sc.calls[k].at <= i) apply(synth, sc.calls[k++]);
-            synth.render(&L[static_cast<size_t>(i)], &R[static_cast<size_t>(i)], kBlock);
+            const long long len = sc.frames - i < kBlock ? sc.frames - i : kBlock;  // last block may be short
+            synth.render(&L[static_cast<size_t>(i)], &R[static_cast<size_t>(i)], static_cast<int>(len));
         }
         writeWav(std::string(argv[2]) + "/" + sc.name + ".wav", L, R);
         std::cout << sc.name << "\n";

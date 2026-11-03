@@ -1,0 +1,5 @@
+# short last block: 100 frames is not a multiple of 128
+scenario odd_frames 100
+0 setInst glass
+0 noteOn 72 0.8
+end

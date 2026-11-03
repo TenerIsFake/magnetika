@@ -1,15 +1,23 @@
 #pragma once
-// Polyphonic voice manager: port of Synth in reference/engine.mjs, with three
+// Polyphonic voice manager: port of Synth in reference/engine.mjs, with these
 // deliberate departures, each off or unreachable when replaying the reference:
 //
 //   1. Voices are preallocated. A new note resets a voice in place instead of
 //      allocating, so nothing allocates on the audio thread.
-//   2. Stealing never takes a held voice while a released one exists. (The JS
-//      reduce starts from voices[0] and can steal it even when it is held.)
+//   2. Stealing takes the quietest released voice; only when every voice is held
+//      does it take the quietest held one. (The JS reduce starts from voices[0]
+//      and, with all voices held, always steals voices[0] whatever its level.)
 //   3. `coilsArmed`: when true, the coils stay engaged at zero sustain gain with
 //      no pedal down, so the electronic spring (vibrato, pitch bend) and trim work
 //      without sustain. Off by default here so the engine matches the reference;
-//      the plugin turns it on.
+//      the plugin turns it on. Turning it off restores the JS *parameters*; drive
+//      state accumulated while armed (vibrato phase, drive-axis angle) carries over.
+//   4. A voice whose state goes non-finite is freed and the output sample zeroed,
+//      instead of poisoning the mix for good. (With the substep fix in the physics
+//      this should not happen; it is a guard, not a mechanism.)
+//
+// Not thread-safe: call everything from the audio thread (a plugin queues
+// parameter and note events and applies them between render calls).
 
 #include <array>
 #include <bitset>
@@ -45,6 +53,7 @@ public:
 
     int activeVoices() const;
     bool sounding(int midi) const;  // a voice is allocated to this note
+    double envOf(int midi) const;   // its envelope follower, or -1 if none
 
 private:
     struct Store {  // the JS glassP / barP objects: only keys that were set

@@ -45,6 +45,7 @@ public:
 
 private:
     void step();
+    void updateSubsteps();
 
     double sr_;
     int sub_ = 2;

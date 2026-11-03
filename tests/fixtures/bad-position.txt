@@ -1,0 +1,3 @@
+scenario bad 256
+x noteOn 72 0.8
+end

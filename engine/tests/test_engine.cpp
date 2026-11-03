@@ -129,15 +129,71 @@ void testStealPrefersReleasedVoice() {
 }
 
 void testStealWhenAllHeld() {
+    // All held: the quietest held voice goes (the JS always took voices[0]).
     Synth s(SR);
     playerDefaults(s);
-    for (int m = 60; m < 68; ++m) s.noteOn(m, 0.8);
+    for (int m = 60; m < 68; ++m) s.noteOn(m, m == 64 ? 0.05 : 0.9);  // 64 is played softly
     renderLeft(s, 0.2);
+    int quietest = -1;
+    for (int m = 60; m < 68; ++m)
+        if (quietest < 0 || s.envOf(m) < s.envOf(quietest)) quietest = m;
     s.noteOn(72, 0.8);  // must still get a voice
     int held = 0;
     for (int m = 60; m < 68; ++m) held += s.sounding(m);
     CHECK(s.sounding(72), "new note not allocated when all voices held");
     CHECK(held == 7, "expected exactly one held note stolen, %d remain", held);
+    CHECK(!s.sounding(quietest), "stole a louder voice; the quietest was %d", quietest);
+}
+
+// Every MIDI note, both instruments, two sample rates: the output stays finite and
+// released voices free. The JS diverges to NaN for bars >= 119 and glass >= 125 at
+// 48 kHz; the substep fix must hold across the whole keyboard.
+void testWholeKeyboardStaysFinite() {
+    for (double sr : {44100.0, 48000.0}) {
+        for (Instrument inst : {Instrument::Glass, Instrument::Bars}) {
+            int bad = 0, firstBad = -1, dropped = 0, firstDropped = -1;
+            for (int m = 0; m <= 127; ++m) {
+                Synth s(sr);
+                playerDefaults(s);
+                s.setInst(inst);
+                const PerfValue sus[] = {{PerfId::sustain, 1}};
+                s.setPerf(sus, 1);  // coils on: the hardest case for stability
+                s.noteOn(m, 1.0);
+                std::vector<float> L(BLOCK), R(BLOCK);
+                bool finite = true;
+                const int blocks = static_cast<int>(0.5 * sr) / BLOCK;
+                for (int b = 0; b < blocks; ++b) {
+                    s.render(L.data(), R.data(), BLOCK);
+                    for (int i = 0; i < BLOCK; ++i) finite = finite && std::isfinite(L[i]) && std::isfinite(R[i]);
+                }
+                // Still held: if the voice had diverged, the NaN guard would have freed it.
+                // So this, not the finite output, is what proves the substep fix works.
+                if (!s.sounding(m)) {
+                    ++dropped;
+                    if (firstDropped < 0) firstDropped = m;
+                }
+                s.noteOff(m);
+                const PerfValue brake[] = {{PerfId::sustain, 0}, {PerfId::brake, 1}};
+                s.setPerf(brake, 2);
+                for (int b = 0; b < static_cast<int>(1 * sr) / BLOCK; ++b) {
+                    s.render(L.data(), R.data(), BLOCK);
+                    for (int i = 0; i < BLOCK; ++i) finite = finite && std::isfinite(L[i]) && std::isfinite(R[i]);
+                }
+                if (!finite) {
+                    ++bad;
+                    if (firstBad < 0) firstBad = m;
+                }
+                // Deliberately NOT checked: that every released voice frees within the
+                // window. With constant Q the ring time is Q/(pi f), about 17 s at C2,
+                // and the brake is force-limited, so low notes legitimately ring on.
+                // (Measured 2026-11-03: braked glass frees from about MIDI 64 up.)
+            }
+            const char* name = inst == Instrument::Glass ? "glass" : "bars";
+            CHECK(bad == 0, "%s at %.0f Hz: %d notes non-finite, first MIDI %d", name, sr, bad, firstBad);
+            CHECK(dropped == 0, "%s at %.0f Hz: %d held notes lost their voice (diverged?), first MIDI %d",
+                  name, sr, dropped, firstDropped);
+        }
+    }
 }
 
 void testVoicesFreeAfterDecay() {
@@ -161,6 +217,7 @@ int main() {
     testStealPrefersReleasedVoice();
     testStealWhenAllHeld();
     testVoicesFreeAfterDecay();
+    testWholeKeyboardStaysFinite();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

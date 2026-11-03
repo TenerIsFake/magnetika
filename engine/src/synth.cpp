@@ -18,6 +18,7 @@ void Synth::setParams(Instrument which, const ParamValue* values, int count) {
     double listen = 0;
     for (int i = 0; i < count; ++i) {
         const auto idx = static_cast<std::size_t>(values[i].id);
+        if (idx >= kNumParams) continue;  // never index past the store
         store.value[idx] = values[i].value;
         store.has.set(idx);
         if (values[i].id == ParamId::f0) hasF0 = true;
@@ -149,14 +150,17 @@ void Synth::render(float* L, float* R, int n) {
         if (v.kind == Voice::Kind::None) continue;
         if (v.kind == Voice::Kind::Bowl) v.bowl.render(L, R, n, true);
         else v.bar.render(L, R, n, true);
-        if (!v.held && v.env() < 1e-5 && !v.on()) {
+        const bool diverged = !std::isfinite(v.env());
+        if (diverged || (!v.held && v.env() < 1e-5 && !v.on())) {
             v.kind = Voice::Kind::None;
             v.midi = -1;
+            v.held = false;
         }
     }
     for (int i = 0; i < n; ++i) {
-        L[i] = static_cast<float>(std::tanh(static_cast<double>(L[i])));
-        R[i] = static_cast<float>(std::tanh(static_cast<double>(R[i])));
+        const double l = std::tanh(static_cast<double>(L[i])), r = std::tanh(static_cast<double>(R[i]));
+        L[i] = std::isfinite(l) ? static_cast<float>(l) : 0.0f;
+        R[i] = std::isfinite(r) ? static_cast<float>(r) : 0.0f;
     }
 }
 
@@ -166,10 +170,12 @@ int Synth::activeVoices() const {
     return n;
 }
 
-bool Synth::sounding(int midi) const {
+bool Synth::sounding(int midi) const { return envOf(midi) >= 0; }
+
+double Synth::envOf(int midi) const {
     for (int i = 0; i < numVoices_; ++i)
-        if (voices_[i].kind != Voice::Kind::None && voices_[i].midi == midi) return true;
-    return false;
+        if (voices_[i].kind != Voice::Kind::None && voices_[i].midi == midi) return voices_[i].env();
+    return -1;
 }
 
 } // namespace magnetika
