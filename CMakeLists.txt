@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.22)
 project(magnetika VERSION 0.1.0 LANGUAGES C CXX)  # C: JUCE requires it
 
+# Static C/C++ runtime on MSVC: the plugin then needs no Visual C++ redistributable
+# on the target machine, and a host with a different runtime cannot clash with it.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
