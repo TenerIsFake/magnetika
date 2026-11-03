@@ -19,9 +19,33 @@ import { SCENARIOS, SAMPLE_RATE, BLOCK } from './scenarios.mjs';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const defaults = JSON.parse(readFileSync(join(root, 'reference/player-defaults.json'), 'utf8'));
 
+// Every call the host makes into the engine is recorded with its sample position,
+// so a port can replay the exact call sequence without re-implementing the
+// player's UI routing. Format, one call per line:
+//   <sample> setParams <glass|bars> key=value ...
+//   <sample> setPerf key=value ...
+//   <sample> setInst <glass|bars>
+//   <sample> noteOn <midi> <vel>
+//   <sample> noteOff <midi>
+// Numbers use JS shortest round-trip formatting, which strtod reads back exactly.
+const kv = o => Object.entries(o).map(([k, v]) => `${k}=${v}`).join(' ');
+function traced(synth, log, host) {
+  const wrap = (name, fmt) => {
+    const f = synth[name].bind(synth);
+    synth[name] = (...a) => { log.push(`${host.at} ${name} ${fmt(...a)}`); return f(...a); };
+  };
+  wrap('setParams', (w, o) => `${w} ${kv(o)}`);
+  wrap('setPerf', o => kv(o));
+  wrap('setInst', i => `${i}`);
+  wrap('noteOn', (m, v) => `${m} ${v}`);
+  wrap('noteOff', m => `${m}`);
+  return synth;
+}
+
 class Host {
-  constructor(sr) {
-    this.s = new Synth(sr);
+  constructor(sr, log = []) {
+    this.at = 0;
+    this.s = traced(new Synth(sr), log, this);
     this.inst = 'glass';
     this.P = { glass: { ...defaults.glass }, bars: { ...defaults.bars } };
     this.perf = { ...defaults.perf, sustain: 0, brake: 0, trim: 0, n3ctl: 0 };
@@ -67,8 +91,8 @@ class Host {
   }
 }
 
-function render(sc) {
-  const host = new Host(SAMPLE_RATE);
+function render(sc, log) {
+  const host = new Host(SAMPLE_RATE, log);
   const n = Math.round(sc.seconds * SAMPLE_RATE / BLOCK) * BLOCK;
   const L = new Float32Array(n), R = new Float32Array(n);
   const bl = new Float32Array(BLOCK), br = new Float32Array(BLOCK);
@@ -77,6 +101,7 @@ function render(sc) {
                           .sort((a, b) => a.at - b.at);
   let k = 0;
   for (let i = 0; i < n; i += BLOCK) {
+    host.at = i;
     while (k < events.length && events[k].at <= i) host.apply(events[k++]);
     host.s.render(bl, br, BLOCK);
     L.set(bl, i); R.set(br, i);
@@ -108,8 +133,11 @@ const manifestPath = join(root, 'reference/manifest.json');
 const manifest = { sample_rate: SAMPLE_RATE, block: BLOCK, engine_source: defaults.source_sha256, scenarios: {} };
 if (!check) mkdirSync(join(root, 'renders'), { recursive: true });
 
+const trace = [`# magnetika engine-call trace, sample_rate=${SAMPLE_RATE} block=${BLOCK}`];
 for (const sc of SCENARIOS) {
-  const { L, R } = render(sc);
+  const log = [];
+  const { L, R } = render(sc, log);
+  trace.push(`scenario ${sc.name} ${L.length}`, ...log, 'end');
   const wav = wavFloat32(L, R, SAMPLE_RATE);
   const sha = createHash('sha256').update(wav).digest('hex');
   const st = stats(L, R);
@@ -126,4 +154,5 @@ if (check) {
   console.log('reference renders unchanged');
 } else {
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+  writeFileSync(join(root, 'renders', 'trace.txt'), trace.join('\n') + '\n');
 }
