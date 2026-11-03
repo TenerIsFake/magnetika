@@ -75,3 +75,9 @@ The plugin keeps the browser player's map, so the two are interchangeable on one
 - Voice stealing never takes a held note (the original can, with all eight voices held).
 - Voices are preallocated; nothing allocates on the audio thread.
 - AU is not planned. VST3 and Standalone cover the Windows hosts this is built for.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The plugin shell (phase 2) will be built with JUCE, which is
+licensed separately: building it yourself needs a JUCE licence (the free Starter tier covers
+individuals) or the AGPLv3 option. The engine and reference tools do not use JUCE.
