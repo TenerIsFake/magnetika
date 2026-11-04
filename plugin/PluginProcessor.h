@@ -48,6 +48,8 @@ public:
     // source of truth for the editor and the host. The audio thread only records it; this
     // (message thread, on a 20 Hz timer) writes it.
     void syncProgramChange();
+    // Likewise an MPE Configuration Message moves the `MPE` switch (message thread).
+    void syncMpe();
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
 
     // ---- editor -> audio: touch gestures (message thread only; single producer)
@@ -68,6 +70,7 @@ public:
         bool sustain = false, brake = false;
         float rotation = 0, vibDepth = 0;
         int instrument = 0;
+        bool mpe = false;  // member channels are read as per-note expression
     };
     Display readDisplay() const;
 
@@ -86,6 +89,12 @@ private:
     void drainUiEvents();
     void publishDisplay(const juce::AudioBuffer<float>& buffer);
     void handleMidi(const juce::MidiMessage& m);
+    // ---- MPE (audio thread)
+    bool isMpeMember(int channel) const;
+    bool handleRpn(int channel, int cc, int value);  // true if the CC was RPN plumbing
+    void handleMpeMember(int channel, const juce::MidiMessage& m);
+    void applySlide(int midi, float slide, bool atNoteOn);
+    void resetMpeNotes();
     void renderRange(juce::AudioBuffer<float>& buffer, int start, int end);
 
     juce::AudioProcessorValueTreeState apvts_;
@@ -123,7 +132,28 @@ private:
     // the next block release every note / silence everything instead.
     std::atomic<bool> releaseAllPending_{false}, allOffPending_{false};
     std::atomic<int> pendingProgram_{-1};  // instrument from a MIDI program change, not yet in the parameter
-    void timerCallback() override { syncProgramChange(); }
+    std::atomic<int> pendingMpe_{-1};      // MPE on/off from a configuration message, not yet in the parameter
+    void timerCallback() override {
+        syncProgramChange();
+        syncMpe();
+    }
+
+    // MPE state. Zones as the MPE spec: a lower zone has master channel 1 and members
+    // 2.., an upper zone master 16 and members ..15. With no configuration message,
+    // switching MPE on gives the usual lower zone of 15 members.
+    struct MpeChannel {
+        int note = -1;        // the note this member channel is playing
+        float bend = 0;       // -1 .. 1
+        float pressure = -1;  // 0 .. 1, or -1 until the controller sends one
+        float slide = -1;     // CC74 0 .. 1, or -1 until sent
+    };
+    std::array<MpeChannel, 17> mpeCh_{};          // by MIDI channel 1..16
+    std::array<unsigned char, 128> mpeHeld_{};    // member channels holding each note
+    std::array<int, 17> rpnMsb_{}, rpnLsb_{};     // RPN selection per channel (127 = none)
+    int lowerMembers_ = 15, upperMembers_ = 0;
+    bool mpeActive_ = false;
+    float lastMpeParam_ = -1;
+    std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr;
 
     // seqlock: odd while the audio thread writes, even when the copy is consistent
     std::atomic<std::uint32_t> dispSeq_{0};

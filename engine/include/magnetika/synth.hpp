@@ -67,6 +67,7 @@ public:
 
     int activeVoices() const;
     bool sounding(int midi) const;  // a voice is allocated to this note
+    bool held(int midi) const;      // ...and its key or finger is still down
     double envOf(int midi) const;   // its envelope follower, or -1 if none
 
     // Touch interface for an editor (see BowlPhysics::setTouch / setFingerSpeed).

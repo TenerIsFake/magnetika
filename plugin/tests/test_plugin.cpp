@@ -414,6 +414,147 @@ void testTwoFingersOnOneNote() {
     }
 }
 
+// ---------------------------------------------------------------- MPE
+
+// Runs `blocks` blocks of 256, delivering `first` at the start of the first one.
+std::vector<float> playBlocks(MagnetikaProcessor& p, int blocks, const std::vector<juce::MidiMessage>& first = {}) {
+    juce::AudioBuffer<float> buf(2, 256);
+    std::vector<float> out;
+    for (int b = 0; b < blocks; ++b) {
+        juce::MidiBuffer midi;
+        if (b == 0) for (const auto& m : first) midi.addEvent(m, 0);
+        buf.clear();
+        p.processBlock(buf, midi);
+        out.insert(out.end(), buf.getReadPointer(0), buf.getReadPointer(0) + 256);
+    }
+    return out;
+}
+
+MagnetikaProcessor* mpeProcessor(MagnetikaProcessor& p, bool bars = false) {
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    setParam(p, "mpe", 1.0f);
+    if (bars) setParam(p, "instrument", 1.0f);
+    p.prepareToPlay(SR, 256);
+    return &p;
+}
+
+float voiceLevel(MagnetikaProcessor& p, int midi, bool* held = nullptr) {
+    const auto d = p.readDisplay();
+    for (int i = 0; i < d.count; ++i) {
+        const auto& v = d.voices[static_cast<size_t>(i)];
+        if (v.midi == midi) {
+            if (held) *held = v.held;
+            return v.level;
+        }
+    }
+    if (held) *held = false;
+    return 0;
+}
+
+juce::MidiMessage pressure(int ch, int v) { return juce::MidiMessage::channelPressureChange(ch, v); }
+
+void testMpePressureIsPerNote() {
+    // C5 on channel 2 and G5 on channel 3; pressing harder on one channel makes
+    // only that note louder (the finger load on that bowl)
+    auto run = [](int p2, int p3) {
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 280, {pressure(2, p2), pressure(3, p3), juce::MidiMessage::noteOn(2, 72, 0.8f),
+                            juce::MidiMessage::noteOn(3, 79, 0.8f)});
+        return std::pair<float, float>(voiceLevel(p, 72), voiceLevel(p, 79));
+    };
+    const auto a = run(10, 120), b = run(120, 10);
+    auto db = [](float x) { return 20 * std::log10(x + 1e-9f); };
+    CHECK(db(b.first) > db(a.first) + 3, "C5 pressure on its channel did not raise it: %.1f vs %.1f dB", db(b.first), db(a.first));
+    CHECK(db(a.second) > db(b.second) + 3, "G5 pressure on its channel did not raise it: %.1f vs %.1f dB", db(a.second), db(b.second));
+}
+
+void testMpeBendIsPerNoteAndClamped() {
+    auto run = [](int bendCh, int wheel, float bendRangeCents) {
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        setParam(p, "bendRange", bendRangeCents);
+        return playBlocks(p, 200, {juce::MidiMessage::pitchWheel(bendCh, wheel), juce::MidiMessage::noteOn(2, 72, 0.8f)});
+    };
+    const auto plain = run(3, 8192, 40);
+    CHECK(run(3, 12000, 40) == plain, "a bend on another member channel moved the note on channel 2");
+    CHECK(run(2, 8400, 40) != plain, "a bend on the note's own channel did nothing");
+    // a member bend beyond what the coils can do is clamped to the pitch-bend range:
+    // 0.49 and 0.9999 of a 48-semitone wheel both exceed 20 c, so both give exactly 20 c
+    CHECK(run(2, 12200, 20) == run(2, 16383, 20), "member bend not clamped to the pitch-bend range");
+}
+
+void testMpeSharedNoteAndAllOff() {
+    MagnetikaProcessor p;
+    mpeProcessor(p);
+    playBlocks(p, 4, {juce::MidiMessage::noteOn(2, 72, 0.8f), juce::MidiMessage::noteOn(3, 72, 0.8f)});
+    playBlocks(p, 4, {juce::MidiMessage::noteOff(2, 72)});
+    bool held = false;
+    voiceLevel(p, 72, &held);
+    CHECK(held, "releasing one of two channels on C5 released the bowl");
+    playBlocks(p, 4, {juce::MidiMessage::noteOff(3, 72)});
+    voiceLevel(p, 72, &held);
+    CHECK(!held, "releasing both channels should release C5");
+    // ALL OFF from the editor while a channel holds C5: the next press must sound again
+    playBlocks(p, 4, {juce::MidiMessage::noteOn(4, 72, 0.8f)});
+    p.pushUiEvent({UiEvent::AllOff, 0, 0});
+    playBlocks(p, 4);
+    playBlocks(p, 4, {juce::MidiMessage::noteOn(5, 72, 0.8f)});
+    voiceLevel(p, 72, &held);
+    CHECK(held, "a note after ALL OFF did not sound (stale MPE hold count)");
+    playBlocks(p, 4, {juce::MidiMessage::noteOff(5, 72)});
+    voiceLevel(p, 72, &held);
+    CHECK(!held, "the note after ALL OFF did not release");
+}
+
+void testMpeConfigurationMessage() {
+    MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    p.prepareToPlay(SR, 256);
+    CHECK(!p.readDisplay().mpe, "MPE should be off by default");
+    using M = juce::MidiMessage;
+    // MCM: RPN 6 on channel 1 = lower zone with 7 member channels (2..8)
+    playBlocks(p, 1, {M::controllerEvent(1, 101, 0), M::controllerEvent(1, 100, 6), M::controllerEvent(1, 6, 7)});
+    CHECK(p.readDisplay().mpe, "an MPE Configuration Message did not switch MPE on");
+    p.syncMpe();
+    CHECK(p.state().getRawParameterValue("mpe")->load() > 0.5f, "the MPE switch did not follow the configuration message");
+    // channel 9 is outside the zone: its pressure is the old global finger load, so it
+    // moves a note on channel 2 too; channel 8 (a member) does not
+    auto level = [](int pressCh) {
+        MagnetikaProcessor q;
+        q.setPlayConfigDetails(0, 2, SR, 256);
+        q.prepareToPlay(SR, 256);
+        playBlocks(q, 1, {M::controllerEvent(1, 101, 0), M::controllerEvent(1, 100, 6), M::controllerEvent(1, 6, 7)});
+        playBlocks(q, 280, {pressure(pressCh, 0), M::noteOn(2, 72, 0.8f)});
+        return voiceLevel(q, 72);
+    };
+    CHECK(level(9) < level(8) * 0.7f, "channel 9 should be global outside a 7-member zone (%.3g vs %.3g)", level(9), level(8));
+    // zone off again
+    playBlocks(p, 1, {M::controllerEvent(1, 101, 0), M::controllerEvent(1, 100, 6), M::controllerEvent(1, 6, 0)});
+    CHECK(!p.readDisplay().mpe, "an MCM with 0 members did not switch MPE off");
+}
+
+void testMpeSlide() {
+    using M = juce::MidiMessage;
+    // fixed bowl (spindle stopped): slide at the bottom is a still finger, so the note fades;
+    // slide at the centre rubs at the finger-speed parameter and keeps it going
+    auto glass = [](int slide) {
+        MagnetikaProcessor p;
+        setParam(p, "spindleOn", 0.0f);
+        mpeProcessor(p);
+        playBlocks(p, 470, {M::controllerEvent(2, 74, slide), M::noteOn(2, 72, 0.8f)});
+        return voiceLevel(p, 72);
+    };
+    CHECK(glass(0) < glass(64) * 0.3f, "slide 0 on a fixed bowl should stop the rub (%.3g vs %.3g)", glass(0), glass(64));
+    // bars: slide picks where the mallet lands, so the strike sounds different
+    auto bar = [](int slide) {
+        MagnetikaProcessor p;
+        mpeProcessor(p, true);
+        return playBlocks(p, 40, {M::controllerEvent(2, 74, slide), M::noteOn(2, 69, 0.8f)});
+    };
+    CHECK(bar(0) != bar(127), "slide did not move the bars' strike position");
+}
+
 void testPresetStoreRoundTrip() {
     const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("magnetika-preset-test");
     dir.deleteRecursively();
@@ -491,6 +632,11 @@ int main(int argc, char** argv) {
     testPresetStoreRoundTrip();
     testFullUiQueueNeverStrandsANote();
     testTwoFingersOnOneNote();
+    testMpePressureIsPerNote();
+    testMpeBendIsPerNoteAndClamped();
+    testMpeSharedNoteAndAllOff();
+    testMpeConfigurationMessage();
+    testMpeSlide();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

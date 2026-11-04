@@ -28,6 +28,8 @@ inline constexpr const char* n3ctl = "n3ctl";
 inline constexpr const char* coilsArmed = "coilsArmed";
 inline constexpr const char* massScaling = "massScaling";
 inline constexpr const char* spindleOn = "spindleOn";  // off = fixed bowls (engine spin 0)
+inline constexpr const char* mpe = "mpe";                // MIDI Polyphonic Expression on member channels
+inline constexpr const char* mpeBendRange = "mpeBendRange";  // semitones of a full member-channel bend
 } // namespace id
 
 // One engine parameter of one instrument, driven by one plugin parameter.

@@ -225,6 +225,12 @@ int Synth::snapshot(VoiceView* out, int max) const {
 
 bool Synth::sounding(int midi) const { return envOf(midi) >= 0; }
 
+bool Synth::held(int midi) const {
+    for (int i = 0; i < numVoices_; ++i)
+        if (voices_[i].kind != Voice::Kind::None && voices_[i].midi == midi && voices_[i].held) return true;
+    return false;
+}
+
 double Synth::envOf(int midi) const {
     for (int i = 0; i < numVoices_; ++i)
         if (voices_[i].kind != Voice::Kind::None && voices_[i].midi == midi) return voices_[i].env();
