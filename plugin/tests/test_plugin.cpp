@@ -327,7 +327,7 @@ int snapshot(const char* path, const juce::String& view) {
     // play a sustained chord (C4 E4 G4 C5) for a second and a half, rotating the pattern
     setParam(p, "sustain", 1.0f);
     setParam(p, "rotation", 0.35f);
-    if (view == "bars") setParam(p, "instrument", 1.0f);
+    if (view.contains("bars")) setParam(p, "instrument", 1.0f);
     for (int m : {60, 64, 67, 72}) p.pushUiEvent({UiEvent::NoteOn, m, 0.85f});
     juce::AudioBuffer<float> buf(2, 256);
     juce::MidiBuffer midi;
@@ -339,7 +339,7 @@ int snapshot(const char* path, const juce::String& view) {
     auto* me = dynamic_cast<magnetika::plugin::MagnetikaEditor*>(ed.get());
     ed->setSize(1200, 800);
     if (me) {
-        if (view == "modify") me->showModify(true);
+        if (view.contains("modify")) me->showModify(true);
         me->poll();
     }
     const auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);

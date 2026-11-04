@@ -86,6 +86,124 @@ void drawNameplate(juce::Graphics& g, juce::Rectangle<float> r) {
     g.drawText(juce::String::fromUTF8("ROTATING-MODE GLASS \xc2\xb7 EDDY BARS"), t2, juce::Justification::centredLeft);
 }
 
+void drawFaceplate(juce::Graphics& g, juce::Rectangle<float> r) {
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.fillRoundedRectangle(r.translated(0, 6).expanded(2), 12.0f);
+    juce::ColourGradient al(juce::Colour(0xffdfe2e5), r.getX(), r.getY(), juce::Colour(0xffa9aeb3), r.getX(), r.getBottom(), false);
+    al.addColour(0.5, juce::Colour(0xffc3c7cb));
+    g.setGradientFill(al);
+    g.fillRoundedRectangle(r, 10.0f);
+    {   // brushing: fine vertical streaks
+        juce::Graphics::ScopedSaveState ss(g);
+        juce::Path clip;
+        clip.addRoundedRectangle(r, 10.0f);
+        g.reduceClipRegion(clip);
+        juce::Random rng(11);
+        for (float x = r.getX(); x < r.getRight(); x += 1.5f) {
+            g.setColour(rng.nextBool() ? juce::Colours::white.withAlpha(0.05f + 0.04f * rng.nextFloat())
+                                       : juce::Colours::black.withAlpha(0.025f + 0.02f * rng.nextFloat()));
+            g.drawVerticalLine(juce::roundToInt(x), r.getY(), r.getBottom());
+        }
+    }
+    g.setColour(juce::Colours::white.withAlpha(0.8f));
+    g.drawHorizontalLine(juce::roundToInt(r.getY()) + 1, r.getX() + 8, r.getRight() - 8);
+    g.setColour(juce::Colours::black.withAlpha(0.25f));
+    g.drawRoundedRectangle(r.reduced(0.5f), 10.0f, 1.0f);
+    juce::Random rng(3);
+    for (auto c : {r.getTopLeft().translated(14, 14), r.getTopRight().translated(-14, 14), r.getBottomLeft().translated(14, -14),
+                   r.getBottomRight().translated(-14, -14)}) {
+        auto s = juce::Rectangle<float>(11, 11).withCentre(c);
+        g.setGradientFill(juce::ColourGradient(juce::Colour(0xfff2f3f4), s.getX() + 3, s.getY() + 3, juce::Colour(0xff8a9095), s.getRight(), s.getBottom(), true));
+        g.fillEllipse(s);
+        g.setColour(juce::Colours::black.withAlpha(0.35f));
+        g.drawEllipse(s, 1.0f);
+        const float a = rng.nextFloat() * juce::MathConstants<float>::pi;
+        g.setColour(juce::Colour(0xff555c62));
+        g.drawLine(c.x - 4.5f * std::cos(a), c.y - 4.5f * std::sin(a), c.x + 4.5f * std::cos(a), c.y + 4.5f * std::sin(a), 2.0f);
+    }
+}
+
+void drawEngraved(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> r, juce::Justification j, float size) {
+    g.setFont(sans(size, true, true).withExtraKerningFactor(0.18f));
+    g.setColour(juce::Colours::white.withAlpha(0.65f));
+    g.drawText(text, r.translated(0, 1), j);
+    g.setColour(juce::Colour(0xff2a2e32));
+    g.drawText(text, r, j);
+}
+
+void drawReadout(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> r, float size) {
+    g.setColour(juce::Colour(0xff121719));
+    g.fillRoundedRectangle(r, 3.0f);
+    g.setColour(juce::Colours::black.withAlpha(0.9f));
+    g.drawRoundedRectangle(r.reduced(0.5f), 3.0f, 1.0f);
+    g.setColour(amberText);
+    g.setFont(mono(size));
+    g.drawText(text, r, juce::Justification::centred);
+}
+
+void drawViewport(juce::Graphics& g, juce::Rectangle<float> r) {
+    juce::ColourGradient vg(juce::Colour(0xff142226), r.getCentreX(), r.getY() + r.getHeight() * 0.38f, juce::Colour(0xff05090a),
+                            r.getX(), r.getBottom(), true);
+    vg.addColour(0.55, juce::Colour(0xff0b1316));
+    g.setGradientFill(vg);
+    g.fillRoundedRectangle(r, 10.0f);
+    g.setColour(juce::Colours::black);
+    g.drawRoundedRectangle(r.reduced(0.5f), 10.0f, 1.5f);
+    g.setColour(juce::Colours::white.withAlpha(0.08f));
+    g.drawHorizontalLine(juce::roundToInt(r.getBottom()), r.getX() + 10, r.getRight() - 10);
+}
+
+void LookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end, juce::Slider&) {
+    const auto box = juce::Rectangle<float>(static_cast<float>(x), static_cast<float>(y), static_cast<float>(w), static_cast<float>(h));
+    const float d = std::min(box.getWidth(), box.getHeight());
+    const auto c = box.getCentre();
+    // engraved ticks
+    g.setColour(juce::Colour(0xff3b4045));
+    for (int i = 0; i <= 10; ++i) {
+        const float a = start + (end - start) * static_cast<float>(i) / 10.0f;
+        const float r0 = d * 0.43f, r1 = d * 0.5f;
+        g.drawLine(c.x + r0 * std::sin(a), c.y - r0 * std::cos(a), c.x + r1 * std::sin(a), c.y - r1 * std::cos(a), 1.6f);
+    }
+    // bakelite skirt
+    auto skirt = juce::Rectangle<float>(d * 0.68f, d * 0.68f).withCentre(c);
+    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.fillEllipse(skirt.translated(0, d * 0.06f).expanded(1));
+    juce::ColourGradient sk(juce::Colour(0xff575b61), skirt.getX() + skirt.getWidth() * 0.38f, skirt.getY() + skirt.getHeight() * 0.3f,
+                            juce::Colour(0xff0b0b0c), skirt.getRight(), skirt.getBottom(), true);
+    sk.addColour(0.6, juce::Colour(0xff1c1d1f));
+    g.setGradientFill(sk);
+    g.fillEllipse(skirt);
+    // knurling on the skirt edge
+    g.setColour(juce::Colours::white.withAlpha(0.06f));
+    for (int i = 0; i < 48; ++i) {
+        const float a = static_cast<float>(i) / 48.0f * juce::MathConstants<float>::twoPi;
+        const float r0 = skirt.getWidth() * 0.44f, r1 = skirt.getWidth() * 0.5f;
+        g.drawLine(c.x + r0 * std::cos(a), c.y + r0 * std::sin(a), c.x + r1 * std::cos(a), c.y + r1 * std::sin(a), 1.0f);
+    }
+    // machined aluminium cap: radial base plus spun-metal sheen wedges
+    auto cap = juce::Rectangle<float>(d * 0.45f, d * 0.45f).withCentre(c);
+    g.setGradientFill(juce::ColourGradient(juce::Colour(0xfff4f5f6), cap.getX() + cap.getWidth() * 0.4f, cap.getY() + cap.getHeight() * 0.35f,
+                                           juce::Colour(0xff8d9196), cap.getRight(), cap.getBottom(), true));
+    g.fillEllipse(cap);
+    for (int i = 0; i < 4; ++i) {
+        juce::Path wedge;
+        const float a0 = 0.35f + static_cast<float>(i) * juce::MathConstants<float>::halfPi;
+        wedge.addPieSegment(cap, a0, a0 + 0.55f, 0.0f);
+        g.setColour(juce::Colours::white.withAlpha(i % 2 == 0 ? 0.35f : 0.15f));
+        g.fillPath(wedge);
+    }
+    g.setColour(juce::Colours::black.withAlpha(0.35f));
+    g.drawEllipse(cap, 1.0f);
+    // pointer
+    const float a = start + (end - start) * pos;
+    juce::Path ptr;
+    ptr.addRoundedRectangle(-1.6f, -skirt.getHeight() * 0.47f, 3.2f, skirt.getHeight() * 0.25f, 1.5f);
+    g.setColour(juce::Colours::black.withAlpha(0.5f));
+    g.fillPath(ptr, juce::AffineTransform::rotation(a).translated(c.x + 0.6f, c.y + 0.8f));
+    g.setColour(juce::Colour(0xfffbf6ec));
+    g.fillPath(ptr, juce::AffineTransform::rotation(a).translated(c.x, c.y));
+}
+
 LookAndFeel::LookAndFeel() {
     setColour(juce::TextButton::textColourOffId, buttonText);
     setColour(juce::TextButton::textColourOnId, buttonText);
@@ -131,6 +249,21 @@ void LookAndFeel::drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, b
         // "mgLamp" lets the lamp follow live state (a MIDI pedal) rather than the button
         const auto& props = b.getProperties();
         const bool lamp = props.contains("mgLamp") ? static_cast<bool>(props["mgLamp"]) : b.getToggleState();
+        if (props["mgStacked"]) {  // faceplate switch: a lamp bar on top, the label beneath
+            auto bar = r.removeFromTop(r.getHeight() / 2).toFloat().withSizeKeepingCentre(22, 6).translated(0, 4);
+            if (lamp) {
+                g.setColour(amber.withAlpha(0.3f));
+                g.fillRoundedRectangle(bar.expanded(4), 5);
+                g.setColour(amber);
+            } else {
+                g.setColour(ledOff);
+            }
+            g.fillRoundedRectangle(bar, 3);
+            g.setColour(buttonText);
+            g.setFont(sans(11.5f, true).withExtraKerningFactor(0.1f));
+            g.drawText(b.getButtonText(), r.translated(0, -2), juce::Justification::centred);
+            return;
+        }
         drawLed(g, r.removeFromLeft(30).toFloat().reduced(10.0f, 0).withSizeKeepingCentre(9, 9), lamp);
         r.removeFromRight(10);
         g.drawText(b.getButtonText(), r, juce::Justification::centredLeft);

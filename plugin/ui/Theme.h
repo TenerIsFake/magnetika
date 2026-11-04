@@ -25,6 +25,14 @@ void drawWell(juce::Graphics& g, juce::Rectangle<float> r);
 void drawBackdrop(juce::Graphics& g, juce::Rectangle<float> r);
 // The brass nameplate.
 void drawNameplate(juce::Graphics& g, juce::Rectangle<float> r);
+// Brushed aluminium faceplate with corner screws.
+void drawFaceplate(juce::Graphics& g, juce::Rectangle<float> r);
+// Engraved label on aluminium (dark text with a light lower edge).
+void drawEngraved(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> r, juce::Justification j, float size);
+// Amber-on-black readout window.
+void drawReadout(juce::Graphics& g, const juce::String& text, juce::Rectangle<float> r, float size = 12.5f);
+// The recessed viewing window onto the instrument.
+void drawViewport(juce::Graphics& g, juce::Rectangle<float> r);
 
 // Push-buttons: dark bakelite with a lamp (toggle) or plain; the instrument
 // switch draws as a brass segment when selected.
@@ -36,6 +44,9 @@ public:
     void drawToggleButton(juce::Graphics&, juce::ToggleButton&, bool over, bool down) override;
     void drawLinearSlider(juce::Graphics&, int x, int y, int w, int h, float pos, float min, float max,
                           juce::Slider::SliderStyle, juce::Slider&) override;
+    // bakelite knob with a machined aluminium cap, white pointer, engraved ticks
+    void drawRotarySlider(juce::Graphics&, int x, int y, int w, int h, float pos, float start, float end,
+                          juce::Slider&) override;
     juce::Font getTextButtonFont(juce::TextButton&, int) override { return sans(12.5f, true); }
 };
 

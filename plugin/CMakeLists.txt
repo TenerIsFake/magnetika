@@ -19,7 +19,8 @@ target_sources(Magnetika PRIVATE
   ui/Theme.cpp
   ui/GlassView.cpp
   ui/BarsView.cpp
-  ui/PlayPage.cpp)
+  ui/PlayPage.cpp
+  ui/ModifyPage.cpp)
 
 # IBM Plex (SIL Open Font License 1.1, ui/fonts/OFL.txt), embedded in the binary.
 juce_add_binary_data(MagnetikaBinary
