@@ -27,6 +27,7 @@ inline constexpr const char* n3ctl = "n3ctl";
 // plugin additions
 inline constexpr const char* coilsArmed = "coilsArmed";
 inline constexpr const char* massScaling = "massScaling";
+inline constexpr const char* spindleOn = "spindleOn";  // off = fixed bowls (engine spin 0)
 } // namespace id
 
 // One engine parameter of one instrument, driven by one plugin parameter.

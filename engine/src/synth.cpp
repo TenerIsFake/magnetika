@@ -177,6 +177,33 @@ int Synth::activeVoices() const {
     return n;
 }
 
+void Synth::setNoteTouch(int midi, double touch) {
+    for (int i = 0; i < numVoices_; ++i)
+        if (voices_[i].kind == Voice::Kind::Bowl && voices_[i].midi == midi) voices_[i].bowl.setTouch(touch);
+}
+
+void Synth::setNoteFingerSpeed(int midi, double radPerSec) {
+    for (int i = 0; i < numVoices_; ++i)
+        if (voices_[i].kind == Voice::Kind::Bowl && voices_[i].midi == midi) voices_[i].bowl.setFingerSpeed(radPerSec);
+}
+
+void Synth::setNoteStrikePos(int midi, double pos) {
+    for (int i = 0; i < numVoices_; ++i)
+        if (voices_[i].kind == Voice::Kind::Bar && voices_[i].midi == midi) voices_[i].bar.p.strikePos = pos;
+}
+
+int Synth::snapshot(VoiceView* out, int max) const {
+    int n = 0;
+    for (int i = 0; i < numVoices_ && n < max; ++i) {
+        const Voice& v = voices_[i];
+        if (v.kind == Voice::Kind::None) continue;
+        const bool glass = v.kind == Voice::Kind::Bowl;
+        out[n++] = {v.midi, glass, v.held, static_cast<float>(v.env()),
+                    glass ? static_cast<float>(v.bowl.patternAngle()) : 0.0f};
+    }
+    return n;
+}
+
 bool Synth::sounding(int midi) const { return envOf(midi) >= 0; }
 
 double Synth::envOf(int midi) const {

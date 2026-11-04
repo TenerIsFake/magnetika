@@ -3,6 +3,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include <array>
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -43,6 +46,27 @@ public:
     juce::AudioProcessorValueTreeState& state() { return apvts_; }
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
 
+    // ---- editor -> audio: touch gestures (message thread only; single producer)
+    struct UiEvent {
+        enum Type : unsigned char { NoteOn, NoteOff, Touch, FingerSpeed, StrikePos, AllOff } type;
+        int midi;
+        float value;  // velocity, touch, rad/s, or 0..1 strike position
+    };
+    bool pushUiEvent(const UiEvent& e);
+
+    // ---- audio -> editor: what to draw (published after every block)
+    struct Display {
+        std::array<Synth::VoiceView, Synth::kMaxVoices> voices{};
+        int count = 0;
+        float peakL = 0, peakR = 0;  // output peak over the last block
+        bool limiting = false;       // the tanh output stage is audibly compressing
+        std::uint32_t midiCount = 0; // increments with every MIDI message received
+        bool sustain = false, brake = false;
+        float rotation = 0, vibDepth = 0;
+        int instrument = 0;
+    };
+    Display readDisplay() const;
+
 private:
     // Performance state: what the engine is currently told. Both the plugin
     // parameters and incoming MIDI write it; whichever moved last wins, as when
@@ -55,6 +79,8 @@ private:
 
     void applyParameters(bool force);
     void pushPerf();
+    void drainUiEvents();
+    void publishDisplay(const juce::AudioBuffer<float>& buffer);
     void handleMidi(const juce::MidiMessage& m);
     void renderRange(juce::AudioBuffer<float>& buffer, int start, int end);
 
@@ -82,6 +108,17 @@ private:
     float bendWheel_ = 0;  // -1 .. 1, from the pitch wheel
 
     std::vector<float> scratchL_, scratchR_;  // only for a mono output bus
+
+    std::atomic<float>* spindleOnRaw_ = nullptr;
+    float lastSpindleOn_ = -1;
+
+    juce::AbstractFifo uiFifo_{256};
+    std::array<UiEvent, 256> uiBuf_{};
+
+    // seqlock: odd while the audio thread writes, even when the copy is consistent
+    std::atomic<std::uint32_t> dispSeq_{0};
+    Display disp_;
+    std::uint32_t midiCount_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MagnetikaProcessor)
 };

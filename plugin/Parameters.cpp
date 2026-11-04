@@ -108,6 +108,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(std::make_unique<APB>(juce::ParameterID{id::n3ctl, 1}, "Coils on (3,0) too", false));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::coilsArmed, 1}, "Coils always armed", true));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::massScaling, 1}, "Modal-mass scaling", false));
+    layout.add(std::make_unique<APB>(juce::ParameterID{id::spindleOn, 1}, "Spindle running", true));
 
     // ---- glass (player GLASS spec; damper is a plugin addition)
     layout.add(fl("g_Q2", "Glass (2,0) Q", logRange(100, 100000), 3500));

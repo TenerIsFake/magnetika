@@ -192,6 +192,63 @@ void testDefaults() {
     CHECK(std::fabs(val("b_damper") - 2.5f) < 1e-6f, "bar damper default %.2f, want 2.5", val("b_damper"));
 }
 
+// ---------------------------------------------------------------- editor bridge
+using UiEvent = MagnetikaProcessor::UiEvent;
+
+void testUiNoteSoundsAndIsDisplayed() {
+    MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    p.prepareToPlay(SR, 256);
+    CHECK(p.pushUiEvent({UiEvent::NoteOn, 72, 0.8f}), "UI event queue refused a note");
+    juce::AudioBuffer<float> buf(2, 256);
+    juce::MidiBuffer midi;
+    float peak = 0;
+    for (int b = 0; b < 100; ++b) {
+        buf.clear();
+        p.processBlock(buf, midi);
+        peak = std::max(peak, buf.getMagnitude(0, 256));
+    }
+    const auto d = p.readDisplay();
+    bool shown = false;
+    for (int i = 0; i < d.count; ++i) shown = shown || (d.voices[static_cast<size_t>(i)].midi == 72 && d.voices[static_cast<size_t>(i)].level > 0);
+    CHECK(peak > 1e-3f, "a touched bowl made no sound (peak %g)", peak);
+    CHECK(shown, "the touched note is missing from the display snapshot (%d voices)", d.count);
+}
+
+void testDisplayShowsMidiPedal() {
+    MagnetikaProcessor p;
+    auto r = render(p, 2048, 256, {{0, juce::MidiMessage::controllerEvent(1, 64, 127)}});
+    juce::ignoreUnused(r);
+    const auto d = p.readDisplay();
+    CHECK(d.sustain, "CC64 down is not reflected in the display (the SUSTAIN light would stay dark)");
+    CHECK(d.midiCount >= 1, "MIDI activity counter did not move");
+}
+
+void testSpindleOffStillFingerFades() {
+    // Spindle off: a touched bowl whose finger stays still must fade; one whose
+    // finger keeps rubbing keeps sounding.
+    auto run = [](bool rub) {
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        auto* prm = p.state().getParameter("spindleOn");
+        prm->setValueNotifyingHost(0.0f);
+        p.prepareToPlay(SR, 256);
+        p.pushUiEvent({UiEvent::NoteOn, 72, 0.8f});
+        juce::AudioBuffer<float> buf(2, 256);
+        juce::MidiBuffer midi;
+        double late = 0;
+        for (int b = 0; b < 470; ++b) {  // about 2.5 s
+            if (b == 2) p.pushUiEvent({UiEvent::FingerSpeed, 72, rub ? 3.8f : 0.0f});
+            buf.clear();
+            p.processBlock(buf, midi);
+            if (b >= 375) late += buf.getRMSLevel(0, 0, 256);
+        }
+        return late;
+    };
+    const double rubbing = run(true), still = run(false);
+    CHECK(still < rubbing * 0.3, "still finger on a stopped spindle kept sounding (%.4g vs rubbing %.4g)", still, rubbing);
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
@@ -223,6 +280,9 @@ int main(int argc, char** argv) {
     testStateRoundTrip();
     testMonoBus();
     testProcessBeforePrepareIsSilent();
+    testUiNoteSoundsAndIsDisplayed();
+    testDisplayShowsMidiPedal();
+    testSpindleOffStillFingerFades();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

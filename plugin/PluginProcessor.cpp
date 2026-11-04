@@ -25,6 +25,7 @@ MagnetikaProcessor::MagnetikaProcessor()
           get(barsSustainGain), get(barsBrakeGain)};
     for (const auto& m : engineMappings()) mappedRaw_.push_back(get(m.paramId));
     mappedLast_.assign(mappedRaw_.size(), 0.0f);
+    spindleOnRaw_ = get(id::spindleOn);
 }
 
 bool MagnetikaProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
@@ -47,11 +48,17 @@ void MagnetikaProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
 // Runs at the start of each block, on the audio thread.
 void MagnetikaProcessor::applyParameters(bool force) {
     const auto& maps = engineMappings();
+    // The spindle switch gates the spin speed: stopped means fixed bowls (spin 0).
+    const float spindle = spindleOnRaw_->load();
+    const bool spindleChanged = spindle != lastSpindleOn_;
+    lastSpindleOn_ = spindle;
     for (size_t i = 0; i < maps.size(); ++i) {
         const float v = mappedRaw_[i]->load();
-        if (!force && v == mappedLast_[i]) continue;
+        const bool isSpin = maps[i].engineId == ParamId::spin;
+        if (!force && v == mappedLast_[i] && !(isSpin && spindleChanged)) continue;
         mappedLast_[i] = v;
-        const double value = maps[i].degreesToRadians ? v * kPi / 180.0 : static_cast<double>(v);
+        double value = maps[i].degreesToRadians ? v * kPi / 180.0 : static_cast<double>(v);
+        if (isSpin && spindle < 0.5f) value = 0.0;
         const ParamValue pv{maps[i].engineId, value};
         synth_->setParams(maps[i].instrument, &pv, 1);
     }
@@ -115,8 +122,61 @@ void MagnetikaProcessor::pushPerf() {
     synth_->setParams(Instrument::Bars, shared, 6);
 }
 
+bool MagnetikaProcessor::pushUiEvent(const UiEvent& e) {
+    const auto scope = uiFifo_.write(1);
+    if (scope.blockSize1 + scope.blockSize2 < 1) return false;  // full: drop rather than block
+    uiBuf_[static_cast<size_t>(scope.blockSize1 > 0 ? scope.startIndex1 : scope.startIndex2)] = e;
+    return true;
+}
+
+// Touch gestures from the editor, applied at the start of the block.
+void MagnetikaProcessor::drainUiEvents() {
+    const auto scope = uiFifo_.read(uiFifo_.getNumReady());
+    auto apply = [this](const UiEvent& e) {
+        switch (e.type) {
+            case UiEvent::NoteOn: synth_->noteOn(e.midi, e.value); break;
+            case UiEvent::NoteOff: synth_->noteOff(e.midi); break;
+            case UiEvent::Touch: synth_->setNoteTouch(e.midi, e.value); break;
+            case UiEvent::FingerSpeed: synth_->setNoteFingerSpeed(e.midi, e.value); break;
+            case UiEvent::StrikePos: synth_->setNoteStrikePos(e.midi, e.value); break;
+            case UiEvent::AllOff: synth_->allOff(); break;
+        }
+    };
+    for (int i = 0; i < scope.blockSize1; ++i) apply(uiBuf_[static_cast<size_t>(scope.startIndex1 + i)]);
+    for (int i = 0; i < scope.blockSize2; ++i) apply(uiBuf_[static_cast<size_t>(scope.startIndex2 + i)]);
+}
+
+void MagnetikaProcessor::publishDisplay(const juce::AudioBuffer<float>& buffer) {
+    const int n = buffer.getNumSamples();
+    dispSeq_.fetch_add(1, std::memory_order_acq_rel);  // odd: writing
+    disp_.count = synth_->snapshot(disp_.voices.data(), static_cast<int>(disp_.voices.size()));
+    disp_.peakL = n > 0 ? buffer.getMagnitude(0, 0, n) : 0.0f;
+    disp_.peakR = n > 0 && buffer.getNumChannels() > 1 ? buffer.getMagnitude(1, 0, n) : disp_.peakL;
+    disp_.limiting = std::max(disp_.peakL, disp_.peakR) > 0.46f;  // tanh(0.5): visibly compressing
+    disp_.midiCount = midiCount_;
+    disp_.sustain = perf_.sustain;
+    disp_.brake = perf_.brake;
+    disp_.rotation = perf_.rotation;
+    disp_.vibDepth = perf_.vibDepth;
+    disp_.instrument = perf_.instrument;
+    dispSeq_.fetch_add(1, std::memory_order_acq_rel);  // even: consistent
+}
+
+MagnetikaProcessor::Display MagnetikaProcessor::readDisplay() const {
+    Display copy;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const auto s1 = dispSeq_.load(std::memory_order_acquire);
+        if (s1 & 1u) continue;
+        copy = disp_;
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (dispSeq_.load(std::memory_order_acquire) == s1) return copy;
+    }
+    return copy;  // a torn read only mis-draws one frame
+}
+
 // The browser player's MIDI map (see README), so the two are interchangeable.
 void MagnetikaProcessor::handleMidi(const juce::MidiMessage& m) {
+    ++midiCount_;
     if (m.isNoteOn()) {
         synth_->noteOn(m.getNoteNumber(), m.getFloatVelocity());
         return;
@@ -192,6 +252,7 @@ void MagnetikaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 
     keyboard_.processNextMidiBuffer(midi, 0, n, true);  // on-screen keyboard notes
     applyParameters(false);
+    drainUiEvents();
 
     // Sample-accurate: render up to each MIDI event, then apply it.
     int pos = 0;
@@ -202,6 +263,7 @@ void MagnetikaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
         handleMidi(meta.getMessage());
     }
     renderRange(buffer, pos, n);
+    publishDisplay(buffer);
 }
 
 void MagnetikaProcessor::getStateInformation(juce::MemoryBlock& destData) {

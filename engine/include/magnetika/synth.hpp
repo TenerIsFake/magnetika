@@ -67,6 +67,25 @@ public:
     bool sounding(int midi) const;  // a voice is allocated to this note
     double envOf(int midi) const;   // its envelope follower, or -1 if none
 
+    // Touch interface for an editor (see BowlPhysics::setTouch / setFingerSpeed).
+    // Apply to the glass voice playing `midi`, if any; bars ignore them.
+    void setNoteTouch(int midi, double touch);
+    void setNoteFingerSpeed(int midi, double radPerSec);
+    // Bars: where this strike lands, 0 = centre .. 1 = end, overriding the
+    // strikePos parameter for this voice only (call right after noteOn).
+    void setNoteStrikePos(int midi, double pos);
+
+    // What an editor draws: one entry per allocated voice. Read on the audio
+    // thread after render() and hand across to the UI by the plugin.
+    struct VoiceView {
+        int midi;
+        bool glass;
+        bool held;     // key or finger still down
+        float level;   // envelope follower, linear (about 0..0.5 at full drive)
+        float pattern; // glass: (2,0) pattern orientation, radians; bars: 0
+    };
+    int snapshot(VoiceView* out, int max) const;
+
 private:
     struct Store {  // the JS glassP / barP objects: only keys that were set
         std::array<double, kNumParams> value{};

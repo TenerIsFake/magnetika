@@ -408,6 +408,115 @@ void testDamperIndependentOfMass() {
     CHECK(dropA > 40 && dropB > 40, "damper T60 1 s: drops %.1f (20 g) and %.1f dB (scaled), want ~60 both", dropA, dropB);
 }
 
+// ---------------------------------------------------------------- editor touch interface
+
+// Renders `seconds`, calling `before(blockIndex)` ahead of each 128-sample block.
+template <typename F>
+Stereo runBlocks(Synth& s, double seconds, F before) {
+    Stereo out;
+    const int total = static_cast<int>(seconds * SR) / BLOCK * BLOCK;
+    out.L.resize(static_cast<size_t>(total));
+    out.R.resize(static_cast<size_t>(total));
+    for (int i = 0, b = 0; i < total; i += BLOCK, ++b) {
+        before(b);
+        s.render(&out.L[static_cast<size_t>(i)], &out.R[static_cast<size_t>(i)], BLOCK);
+    }
+    return out;
+}
+constexpr int blockAt(double seconds) { return static_cast<int>(seconds * 48000.0) / 128; }
+
+void testTouchScalesTheFinger() {
+    // A light touch (0.3) on a held glass note sounds quieter than a full one.
+    auto level = [](double touch) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.noteOn(72, 0.8);
+        s.setNoteTouch(72, touch);
+        return runBlocks(s, 1.5, [](int) {}).energyDb(1.0, 1.5);
+    };
+    const double full = level(1.0), light = level(0.3);
+    CHECK(light < full - 3, "touch 0.3 not quieter than 1.0: %.1f vs %.1f dB", light, full);
+}
+
+void testStillFingerOnStoppedSpindleStopsExciting() {
+    // Spindle stopped: the finger must travel along the rim to excite the bowl.
+    // One finger keeps rubbing; the other stops at 0.5 s and the note must fade.
+    auto run = [](bool keepRubbing) {
+        Synth s(SR);
+        playerDefaults(s);
+        const ParamValue still[] = {{ParamId::spin, 0}};
+        s.setParams(Instrument::Glass, still, 1);
+        s.noteOn(72, 0.8);
+        return runBlocks(s, 2.5, [&](int b) {
+            if (b == blockAt(0.5) && !keepRubbing) s.setNoteFingerSpeed(72, 0);
+        });
+    };
+    const Stereo rub = run(true), still = run(false);
+    const double rubLate = rub.energyDb(2.0, 2.5), stillLate = still.energyDb(2.0, 2.5);
+    CHECK(stillLate < rubLate - 10, "a still finger kept exciting the bowl: %.1f vs rubbing %.1f dB", stillLate, rubLate);
+    // and the default (no call) is the JS behaviour: the finger keeps its own speed
+    Synth s(SR);
+    playerDefaults(s);
+    const ParamValue still0[] = {{ParamId::spin, 0}};
+    s.setParams(Instrument::Glass, still0, 1);
+    s.noteOn(72, 0.8);
+    const Stereo dflt = runBlocks(s, 2.5, [](int) {});
+    CHECK(dflt.L == rub.L && dflt.R == rub.R, "untouched note must be bit-identical to the JS path");
+}
+
+void testPatternAngleFollowsTheDrive() {
+    // With the coils driving and the drive axis rotating, the reported pattern
+    // angle turns; with rotation 0 on a fixed bowl it stays put.
+    auto travel = [](double rot) {
+        Synth s(SR);
+        playerDefaults(s);
+        const ParamValue p[] = {{ParamId::spin, 0}, {ParamId::split, 0}, {ParamId::rot, rot}};
+        s.setParams(Instrument::Glass, p, 3);
+        const PerfValue sus[] = {{PerfId::sustain, 1}};
+        s.setPerf(sus, 1);
+        s.noteOn(72, 0.8);
+        double total = 0, prev = 0;
+        bool first = true;
+        Synth::VoiceView v[16];
+        runBlocks(s, 3.0, [&](int b) {
+            if (b == blockAt(0.4)) s.noteOff(72);  // the coils carry it from here
+            if (b < blockAt(1.0) || s.snapshot(v, 16) == 0) return;
+            const double a = v[0].pattern;
+            if (!first) {
+                double d = a - prev;  // unwrap on the quarter-turn period
+                while (d > 0.7854) d -= 1.5708;
+                while (d < -0.7854) d += 1.5708;
+                total += d;
+            }
+            prev = a;
+            first = false;
+        });
+        return std::fabs(total);
+    };
+    const double turning = travel(0.5), still = travel(0.0);
+    CHECK(turning > 1.5, "pattern did not follow a 0.5 rev/s drive: turned %.2f rad in 2 s", turning);
+    CHECK(still < 0.5, "pattern drifted %.2f rad with no rotation", still);
+}
+
+void testSnapshotReportsVoices() {
+    Synth s(SR);
+    playerDefaults(s);
+    s.noteOn(60, 0.8);
+    s.noteOn(67, 0.8);
+    runBlocks(s, 0.3, [](int) {});
+    s.noteOff(67);
+    Synth::VoiceView v[16];
+    const int n = s.snapshot(v, 16);
+    bool saw60 = false, saw67 = false;
+    for (int i = 0; i < n; ++i) {
+        if (v[i].midi == 60) saw60 = v[i].held && v[i].glass && v[i].level > 0;
+        if (v[i].midi == 67) saw67 = !v[i].held;
+    }
+    CHECK(n == 2, "snapshot listed %d voices, want 2", n);
+    CHECK(saw60, "held glass note 60 missing or wrong in the snapshot");
+    CHECK(saw67, "released note 67 should be listed as not held");
+}
+
 } // namespace
 
 int main() {
@@ -424,6 +533,10 @@ int main() {
     testModalMassScaling();
     testNyquistGuard();
     testDamperIndependentOfMass();
+    testTouchScalesTheFinger();
+    testStillFingerOnStoppedSpindleStopsExciting();
+    testPatternAngleFollowsTheDrive();
+    testSnapshotReportsVoices();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

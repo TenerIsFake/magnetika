@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // One glass bowl: the two degenerate (2,0) modes and the (3,0) pair, a wet finger,
 // virtual coils (sustain / brake / electronic spring / trim) and Bryan coupling.
 //
@@ -45,11 +45,25 @@ public:
     void kick(double vel);
     void silence();
 
+    // Touch interface (not in the JS; the defaults leave it bit-identical):
+    // touch scales this note's finger load (1 = as played); fingerSpeed sets how
+    // fast the finger travels along the rim, rad/s. On a stopped spindle a still
+    // finger (0) does not excite the bowl, so a touch screen can make the player rub.
+    void setTouch(double t) { touch_ = t; }
+    void setFingerSpeed(double radPerSec) {
+        omF_ = radPerSec;
+        moving_ = on_ && radPerSec != 0;
+    }
+
     // Renders n samples; adds into L/R when `add`, as float32 like the JS Float32Array.
     void render(float* L, float* R, int n, bool add);
 
     double env() const { return env_; }
     bool on() const { return on_; }
+    // Orientation of the (2,0) standing-wave pattern over the last render call,
+    // radians in [-pi/4, pi/4) (the pattern repeats every quarter turn). Read-only
+    // display state: it never feeds back into the sound.
+    double patternAngle() const { return pattern_; }
 
 private:
     void step();
@@ -67,6 +81,8 @@ private:
     double m_ = 0.02;
     double Ft_ = 0, vrel_ = 0;
     double damp_ = 0;  // damper engagement 0..1, ramps in after release
+    double touch_ = 1.0;
+    double patS1_ = 0, patS2_ = 0, pattern_ = 0;
     bool nyquistGuard_ = true, keep2_ = true, keep3_ = true;
     js::XorShift32 rng_;
 };

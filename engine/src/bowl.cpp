@@ -109,7 +109,7 @@ void BowlPhysics::step() {
     double d = thT_ - thF_;
     d = std::atan2(std::sin(d), std::cos(d));
     thF_ += d * js::min1(dt / 0.005);
-    NT_ = on_ ? P.N * (velScale_ != 0 ? velScale_ : 1) * P.pressure : 0;
+    NT_ = on_ ? P.N * (velScale_ != 0 ? velScale_ : 1) * P.pressure * touch_ : 0;  // touch_ = 1: exact JS
     N_ += (NT_ - N_) * js::min1(dt / 0.015);
 
     const double th = thF_, s2 = std::sin(2 * th), c2 = std::cos(2 * th);
@@ -258,7 +258,12 @@ void BowlPhysics::render(float* L, float* R, int n, bool add) {
         }
         const double e = std::fabs(l) + std::fabs(r);
         env_ = e > env_ ? e : env_ * 0.9995;
+        // display only: second moments of the (2,0) pair give the pattern orientation
+        patS1_ += q_[0] * q_[0] - q_[1] * q_[1];
+        patS2_ += 2 * q_[0] * q_[1];
     }
+    if (patS1_ != 0 || patS2_ != 0) pattern_ = 0.25 * std::atan2(patS2_, patS1_);
+    patS1_ = patS2_ = 0;
 }
 
 } // namespace magnetika
