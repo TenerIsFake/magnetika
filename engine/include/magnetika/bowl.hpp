@@ -50,6 +50,10 @@ public:
     // fast the finger travels along the rim, rad/s. On a stopped spindle a still
     // finger (0) does not excite the bowl, so a touch screen can make the player rub.
     void setTouch(double t) { touch_ = t; }
+    // Per-note pitch bend in cents (MPE), added to the shared `bend` parameter and
+    // applied by the same electronic spring, so it needs the coils engaged and is
+    // limited by Fvib like any bend. Reset to 0 by noteOn.
+    void setNoteBend(double cents) { noteBend_ = cents; }
     void setFingerSpeed(double radPerSec) {
         omF_ = radPerSec;
         moving_ = on_ && radPerSec != 0;
@@ -82,6 +86,7 @@ private:
     double Ft_ = 0, vrel_ = 0;
     double damp_ = 0;  // damper engagement 0..1, ramps in after release
     double touch_ = 1.0;
+    double noteBend_ = 0;  // cents
     double patS1_ = 0, patS2_ = 0, pattern_ = 0;
     bool nyquistGuard_ = true, keep2_ = true, keep3_ = true;
     js::XorShift32 rng_;

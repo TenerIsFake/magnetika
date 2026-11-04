@@ -27,6 +27,8 @@ public:
     double modalMass() const { return m_; }
     void setNyquistGuard(bool on) { nyquistGuard_ = on; }
     bool partialAudible() const { return keep2_; }
+    // Per-note pitch bend in cents (MPE), as BowlPhysics::setNoteBend. Reset by noteOn.
+    void setNoteBend(double cents) { noteBend_ = cents; }
     void noteOn(double vel);
     void noteOff() { on_ = false; }
     void kick(double vel) { noteOn(vel); }
@@ -49,6 +51,7 @@ private:
     double env_ = 0, venv_ = 0, t_ = 0, st_ = -1, sv_ = 0;
     bool on_ = false;
     double damp_ = 0;
+    double noteBend_ = 0;  // cents
     bool nyquistGuard_ = true, keep2_ = true;
 };
 

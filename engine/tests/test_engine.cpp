@@ -299,6 +299,87 @@ void testDamperYieldsToSustain() {
     CHECK(identical(a, playNote(n)), "damper acted while sustain held the note");
 }
 
+// Frequency of the strongest component within +-8 % of `guess` over [a, b)
+// seconds: a Hann-windowed DFT, scanned in 1 Hz steps, then 0.01 Hz around the
+// best. Robust where zero crossings are not (friction noise, or the swirl
+// nulling one ear).
+double peakFreq(const std::vector<float>& x, double a, double b, double guess) {
+    const size_t i0 = static_cast<size_t>(a * SR), i1 = std::min(x.size(), static_cast<size_t>(b * SR));
+    const double n = static_cast<double>(i1 - i0), twoPi = 2 * 3.14159265358979;
+    std::vector<double> w(i1 - i0);
+    for (size_t i = 0; i < w.size(); ++i) w[i] = (0.5 - 0.5 * std::cos(twoPi * static_cast<double>(i) / n)) * x[i0 + i];
+    auto power = [&](double f) {
+        const double c = std::cos(twoPi * f / SR), sn = std::sin(twoPi * f / SR);
+        double pr = 1, pi = 0, re = 0, im = 0;  // phasor e^{-jwk} by rotation
+        for (double v : w) {
+            re += v * pr;
+            im += v * pi;
+            const double nr = pr * c + pi * sn;
+            pi = pi * c - pr * sn;
+            pr = nr;
+        }
+        return re * re + im * im;
+    };
+    auto scan = [&](double lo, double hi, double step) {
+        double best = -1, bestF = lo;
+        for (double f = lo; f <= hi; f += step)
+            if (const double pw = power(f); pw > best) { best = pw; bestF = f; }
+        return bestF;
+    };
+    const double coarse = scan(guess * 0.92, guess * 1.08, 1.0);
+    return scan(coarse - 1.5, coarse + 1.5, 0.01);
+}
+
+void testNoteBend() {
+    // MPE per-note bend: through the same spring as the shared bend, so a per-note
+    // 30 c bend on an armed glass note moves its pitch as the shared 30 c does.
+    constexpr double C5 = 523.251;
+    auto run = [](double shared, double perNote, int bentMidi) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setCoilsArmed(true);
+        const ParamValue bend[] = {{ParamId::bend, shared}};
+        s.setParams(Instrument::Glass, bend, 1);
+        s.noteOn(72, 0.8);
+        s.setNoteBend(bentMidi, perNote);
+        return renderLeft(s, 1.5);
+    };
+    const auto plain = run(0, 0, 72), viaShared = run(30, 0, 72), viaNote = run(0, 30, 72), other = run(0, 30, 76);
+    const double ref = peakFreq(plain, 0.6, 1.4, C5);
+    const double byNote = cents(peakFreq(viaNote, 0.6, 1.4, C5), ref), byShared = cents(peakFreq(viaShared, 0.6, 1.4, C5), ref);
+    CHECK(std::fabs(byNote - byShared) < 0.5, "per-note bend %.2f c differs from the shared bend %.2f c", byNote, byShared);
+    CHECK(byNote > 15 && byNote < 60, "per-note bend moved pitch %.2f c", byNote);
+    CHECK(other == plain, "bending another note (not sounding) changed this one");
+    // a new note on the bowl starts unbent: a retrigger after a bent note sounds
+    // like a retrigger after an unbent one (same sequence, bend 0)
+    auto retrigger = [](double firstBend) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setCoilsArmed(true);
+        s.noteOn(72, 0.8);
+        s.setNoteBend(72, firstBend);
+        renderLeft(s, 0.5);
+        s.noteOff(72);
+        renderLeft(s, 0.1);
+        s.noteOn(72, 0.8);
+        return renderLeft(s, 1.5);
+    };
+    const double carried = cents(peakFreq(retrigger(30), 0.6, 1.4, C5), peakFreq(retrigger(0), 0.6, 1.4, C5));
+    CHECK(std::fabs(carried) < 3, "per-note bend carried into the next note: %.2f c", carried);
+    // and bars bend too
+    auto bar = [](double perNote) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setInst(Instrument::Bars);
+        s.setCoilsArmed(true);
+        s.noteOn(72, 0.8);
+        s.setNoteBend(72, perNote);
+        return renderLeft(s, 1.0);
+    };
+    const double barShift = cents(peakFreq(bar(30), 0.3, 0.9, C5), peakFreq(bar(0), 0.3, 0.9, C5));
+    CHECK(barShift > 15 && barShift < 60, "bars per-note bend moved pitch %.2f c", barShift);
+}
+
 void testDamperOnBars() {
     NoteSpec n;
     n.inst = Instrument::Bars;
@@ -546,6 +627,7 @@ int main() {
     testNyquistGuard();
     testDamperIndependentOfMass();
     testTouchScalesTheFinger();
+    testNoteBend();
     testStillFingerOnStoppedSpindleStopsExciting();
     testPatternAngleFollowsTheDrive();
     testSnapshotReportsVoices();

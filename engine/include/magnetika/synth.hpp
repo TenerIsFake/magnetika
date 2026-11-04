@@ -76,6 +76,9 @@ public:
     // Bars: where this strike lands, 0 = centre .. 1 = end, overriding the
     // strikePos parameter for this voice only (call right after noteOn).
     void setNoteStrikePos(int midi, double pos);
+    // Per-note pitch bend in cents for the voice playing `midi` (glass or bars), on
+    // top of the shared bend: MPE. The coils' spring sets how far it can go.
+    void setNoteBend(int midi, double cents);
 
     // What an editor draws: one entry per allocated voice. Read on the audio
     // thread after render() and hand across to the UI by the plugin.

@@ -202,6 +202,15 @@ void Synth::setNoteStrikePos(int midi, double pos) {
         if (voices_[i].kind == Voice::Kind::Bar && voices_[i].midi == midi) voices_[i].bar.p.strikePos = pos;
 }
 
+void Synth::setNoteBend(int midi, double cents) {
+    for (int i = 0; i < numVoices_; ++i) {
+        Voice& v = voices_[i];
+        if (v.midi != midi) continue;
+        if (v.kind == Voice::Kind::Bowl) v.bowl.setNoteBend(cents);
+        else if (v.kind == Voice::Kind::Bar) v.bar.setNoteBend(cents);
+    }
+}
+
 int Synth::snapshot(VoiceView* out, int max) const {
     int n = 0;
     for (int i = 0; i < numVoices_ && n < max; ++i) {

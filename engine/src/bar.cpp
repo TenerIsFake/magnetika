@@ -50,6 +50,7 @@ void BarPhysics::noteOn(double vel) {
     st_ = 0;
     sv_ = vel;
     on_ = true;
+    noteBend_ = 0;
     // Nyquist guard for the 4x partial; see BowlPhysics::noteOn.
     keep2_ = !nyquistGuard_ || p.f0 * p.ratio < 0.5 * sr_ / 1.05;
 }
@@ -88,7 +89,7 @@ void BarPhysics::step() {
         D1 = P.Fmax * std::tanh(geff * v[0] / P.Fmax);
         if (P.coil2 != 0) D2 = 0.5 * P.Fmax * std::tanh(geff * v[1] / (0.5 * P.Fmax));
         t_ += dt;
-        const double cents = P.vibDepth * std::sin(2 * PI * P.vibRate * t_) + P.bend;
+        const double cents = P.vibDepth * std::sin(2 * PI * P.vibRate * t_) + P.bend + noteBend_;  // + 0: exact JS
         if (cents != 0) {
             const double dk = -2 * m * w1 * w1 * (std::pow(2.0, cents / 1200) - 1);
             const double f = dk * q[0];

@@ -64,6 +64,7 @@ void BowlPhysics::noteOn(double vel) {
     }
     velScale_ = 0.4 + 0.8 * vel;
     touch_ = 1.0;  // a new strike starts at full finger load; a touch screen sets it after noteOn
+    noteBend_ = 0;  // likewise, no per-note bend carries into the next note
     psi_ = thF_;
     // Nyquist guard, decided once per note so a mode never pops in or out. The
     // 5 % margin covers pitch bend (+40 c) and vibrato on top of the note.
@@ -160,7 +161,7 @@ void BowlPhysics::step() {
         }
         // electronic spring: vibrato + pitch bend
         t_ += dt;
-        const double cents = P.vibDepth * std::sin(2 * PI * P.vibRate * t_) + P.bend;
+        const double cents = P.vibDepth * std::sin(2 * PI * P.vibRate * t_) + P.bend + noteBend_;  // + 0: exact JS
         if (cents != 0) {
             const double dk = -2 * m * w0 * w0 * (std::pow(2.0, cents / 1200) - 1);
             const double fa = dk * q[0], fb = dk * q[1];
