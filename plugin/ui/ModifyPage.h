@@ -32,6 +32,7 @@ public:
     ~Cutaway() override { stopTimer(); }
     void paint(juce::Graphics&) override;
     void poll() { timerCallback(); }
+    int shownInstrument = 0;  // set by the page (buttons or MIDI program change)
 
 private:
     void timerCallback() override;

@@ -39,7 +39,27 @@ float levelFromEnv(float env) {
 } // namespace
 
 BarsView::BarsView(MagnetikaProcessor& p) : proc_(p) { startTimerHz(30); }
-BarsView::~BarsView() { stopTimer(); }
+BarsView::~BarsView() {
+    stopTimer();
+    releaseAllTouches();
+}
+
+float BarsView::currentScale() const {
+    return juce::jlimit(1.0f, 2.5f, juce::Component::getApproximateScaleFactorForComponent(this));
+}
+
+void BarsView::visibilityChanged() {
+    if (!isVisible()) releaseAllTouches();  // a hidden view gets no mouseUp
+}
+
+void BarsView::releaseAllTouches() {
+    for (const auto& [midi, count] : malletsOn_) {
+        juce::ignoreUnused(count);
+        proc_.pushUiEvent({MagnetikaProcessor::UiEvent::NoteOff, midi, 0});
+    }
+    mallets_.clear();
+    malletsOn_.clear();
+}
 
 juce::Point<float> BarsView::project(float x, float y, float z) const {
     const float ca = std::cos(kYaw), sa = std::sin(kYaw), cb = std::cos(kPitch), sb = std::sin(kPitch);
@@ -109,7 +129,11 @@ void BarsView::build() {
 
 void BarsView::renderStatic() {
     if (getWidth() <= 0 || getHeight() <= 0) return;
-    const float scale = juce::Component::getApproximateScaleFactorForComponent(this);
+    // the editor scales this view with a transform; render at the physical scale (capped)
+    const float scale = currentScale();
+    cacheScale_ = pendingScale_ = scale;
+    glow_.assign(bars_.size(), {});
+    glowBounds_.assign(bars_.size(), {});
     cache_ = juce::Image(juce::Image::ARGB, juce::roundToInt(getWidth() * scale), juce::roundToInt(getHeight() * scale), true);
     juce::Graphics g(cache_);
     g.addTransform(juce::AffineTransform::scale(scale));
@@ -142,12 +166,33 @@ void BarsView::renderStatic() {
     drawRow(drawFront_, railsFront_, cordsFront_);
 }
 
+const juce::Image& BarsView::glowSprite(size_t i) {
+    if (i < glow_.size() && !glow_[i].isValid()) {
+        const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
+        const int radius = juce::roundToInt(9 * k) + 1;
+        const auto bounds = bars_[i].top.getBounds().expanded(static_cast<float>(radius) * 2 + 2);
+        glowBounds_[i] = bounds;
+        const float s = cacheScale_ > 0 ? cacheScale_ : 1.0f;
+        juce::Image img(juce::Image::SingleChannel, std::max(1, juce::roundToInt(bounds.getWidth() * s)),
+                        std::max(1, juce::roundToInt(bounds.getHeight() * s)), true, juce::SoftwareImageType());
+        juce::Graphics g(img);
+        g.addTransform(juce::AffineTransform::translation(-bounds.getX(), -bounds.getY()).scaled(s));
+        juce::DropShadow(juce::Colours::white, radius, {}).drawForPath(g, bars_[i].top);
+        glow_[i] = img;
+    }
+    return glow_[i];
+}
+
 void BarsView::paint(juce::Graphics& g) {
+    if (!cache_.isValid()) renderStatic();  // a changed scale is re-rendered from the timer, once it settles
     if (cache_.isValid()) g.drawImage(cache_, getLocalBounds().toFloat());
     const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
     const auto accent = theme::amber;
-    auto overlay = [&](const Bar& b, float L) {
-        juce::DropShadow(accent.withAlpha(0.8f * L), juce::roundToInt(9 * k) + 1, {}).drawForPath(g, b.top);
+    auto overlay = [&](size_t bi, float L) {
+        const Bar& b = bars_[bi];
+        const auto& sprite = glowSprite(bi);  // blurred once, tinted per frame
+        g.setColour(accent.withAlpha(0.8f * L));
+        g.drawImage(sprite, glowBounds_[bi], juce::RectanglePlacement::stretchToFit, true);
         g.setColour(accent.withAlpha(0.55f * L));
         g.fillPath(b.top);
         g.setColour(juce::Colour(0xff8a5a26).withAlpha(L));
@@ -163,15 +208,13 @@ void BarsView::paint(juce::Graphics& g) {
         clip.setUsingNonZeroWinding(false);
         g.reduceClipRegion(clip);
         for (int i : drawBack_) {
-            const auto& b = bars_[static_cast<size_t>(i)];
-            const float L = level_[static_cast<size_t>(b.midi)];
-            if (L >= 0.04f) overlay(b, L);
+            const float L = level_[static_cast<size_t>(bars_[static_cast<size_t>(i)].midi)];
+            if (L >= 0.04f) overlay(static_cast<size_t>(i), L);
         }
     }
     for (int i : drawFront_) {
-        const auto& b = bars_[static_cast<size_t>(i)];
-        const float L = level_[static_cast<size_t>(b.midi)];
-        if (L >= 0.04f) overlay(b, L);
+        const float L = level_[static_cast<size_t>(bars_[static_cast<size_t>(i)].midi)];
+        if (L >= 0.04f) overlay(static_cast<size_t>(i), L);
     }
     // mallets in play
     for (const auto& [idx, ml] : mallets_) {
@@ -230,9 +273,19 @@ int BarsView::hit(juce::Point<float> p, float* pos) const {
 
 void BarsView::strike(int midi, float vel, float pos) {
     using T = MagnetikaProcessor::UiEvent;
+    ++malletsOn_[midi];  // every strike sounds; the damper stays off while any mallet rests on the bar
     proc_.pushUiEvent({T::NoteOn, midi, vel});
     proc_.pushUiEvent({T::StrikePos, midi, pos});
     lastStrike_ = "Struck " + noteName(midi) + " at " + juce::String(pos, 2) + " (centre 0, end 1), velocity " + juce::String(vel, 2) + ".";
+}
+
+void BarsView::lift(int midi) {
+    auto it = malletsOn_.find(midi);
+    if (it == malletsOn_.end()) return;
+    if (--it->second <= 0) {
+        malletsOn_.erase(it);
+        proc_.pushUiEvent({MagnetikaProcessor::UiEvent::NoteOff, midi, 0});
+    }
 }
 
 void BarsView::mouseDown(const juce::MouseEvent& e) {
@@ -259,7 +312,7 @@ void BarsView::mouseDrag(const juce::MouseEvent& e) {
     if (m >= 0 && m != ml.midi) {  // dragged onto the next bar: a roll, louder when faster
         const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
         const float speed = e.position.getDistanceFrom(ml.last) / static_cast<float>(std::max(1.0, now - ml.lastTime) / 1000.0) / k;
-        proc_.pushUiEvent({MagnetikaProcessor::UiEvent::NoteOff, ml.midi, 0});
+        lift(ml.midi);
         strike(m, juce::jlimit(0.1f, 1.0f, 0.45f + speed / 2000.0f), pos);
         ml.midi = m;
     }
@@ -272,7 +325,7 @@ void BarsView::mouseDrag(const juce::MouseEvent& e) {
 void BarsView::mouseUp(const juce::MouseEvent& e) {
     auto it = mallets_.find(e.source.getIndex());
     if (it == mallets_.end()) return;
-    proc_.pushUiEvent({MagnetikaProcessor::UiEvent::NoteOff, it->second.midi, 0});
+    lift(it->second.midi);
     mallets_.erase(it);
     repaint();
 }
@@ -282,17 +335,35 @@ float BarsView::levelOf(int midi) const { return midi >= 0 && midi < 128 ? level
 void BarsView::timerCallback() {
     const auto d = proc_.readDisplay();
     std::array<float, 128> lvl{};
-    below_ = above_ = false;
+    bool below = false, above = false;
     for (int i = 0; i < d.count; ++i) {
         const auto& v = d.voices[static_cast<size_t>(i)];
         if (v.glass || v.midi < 0 || v.midi > 127) continue;
         const float L = levelFromEnv(v.level);
         lvl[static_cast<size_t>(v.midi)] = std::max(lvl[static_cast<size_t>(v.midi)], L);
-        if (L > 0.04f && v.midi < kLow) below_ = true;
-        if (L > 0.04f && v.midi > kHigh) above_ = true;
+        if (L > 0.04f && v.midi < kLow) below = true;
+        if (L > 0.04f && v.midi > kHigh) above = true;
+    }
+    // repaint only when something visible changed (an idle view costs nothing)
+    // (against the last painted frame, so a slow decay still repaints, and goes dark at the end)
+    bool changed = below != below_ || above != above_;
+    for (size_t m = 0; m < 128 && !changed; ++m)
+        changed = std::abs(lvl[m] - paintedLevel_[m]) > 0.004f || (lvl[m] >= 0.04f) != (paintedLevel_[m] >= 0.04f);
+    const float scale = currentScale();
+    if (std::abs(scale - cacheScale_) > 0.05f) {  // window resized: re-render once the scale settles
+        if (std::abs(scale - pendingScale_) < 0.01f) {
+            renderStatic();
+            changed = true;
+        }
+        pendingScale_ = scale;
     }
     level_ = lvl;
-    repaint();
+    below_ = below;
+    above_ = above;
+    if (changed) {
+        paintedLevel_ = lvl;
+        repaint();
+    }
 }
 
 } // namespace magnetika::plugin

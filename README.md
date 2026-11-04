@@ -26,8 +26,8 @@ for both maths libraries.
 |---|---|---|
 | 0 | Reference engine extracted from the browser player; 17 reference renders | done |
 | 1 | Plain C++ engine + offline renderer, matched against the reference | done |
-| 2 | JUCE VST3 + Standalone: CC map, parameters, 16 voices, material picker | plugin shell done |
-| 3 | Bowl-view editor | |
+| 2 | JUCE VST3 + Standalone: CC map, parameters, 16 voices, material picker | done |
+| 3 | The instrument editor: play view (oblique 3-D, touch) and modify view (cut-away, faceplate) | done |
 | 4 | MPE, per-bowl tuning table, `.scl` microtuning | |
 
 ## Layout
@@ -51,7 +51,13 @@ tools/
 plugin/                JUCE 9 VST3 + Standalone (Windows/macOS builds)
   Parameters.*         every player control, plus armed coils, damper, mass scaling
   PluginProcessor.*    sample-accurate MIDI, last-writer-wins between CC and parameter
-  PluginEditor.*       plain controls + keyboard with the C3–C6 instrument range marked
+  PluginEditor.*       play page / modify page on a 1200 x 800 canvas, scaled to a resizable 3:2 window
+  ui/GlassView.*       the armonica in oblique 3-D (37 bowls, rev B sizes); touch, glissando, rubbing
+  ui/BarsView.*        the vibraphone in oblique 3-D; strike, roll, strike position
+  ui/PlayPage.*        pedals, spindle, presets, rotation / vibrato strips, note strip, level and meters
+  ui/ModifyPage.*      live cut-away, aluminium faceplate with knobs, ADVANCED drawer (every parameter)
+  ui/PresetStore.h     user presets in Documents/Magnetika/Presets (*.magnetika)
+  ui/Theme.*           walnut, brass, aluminium, amber; IBM Plex fonts (SIL OFL, ui/fonts/OFL.txt)
   tests/               MIDI timing, block-size independence, CC mapping, state, mono bus
 ```
 
@@ -71,6 +77,33 @@ the engine and its tests build everywhere.
 
 Plugin defaults depart from the reference player: coils always armed, a 1.5 s glass damper and a
 2.5 s bar damper, and 16 voices instead of 8. Validated with pluginval at strictness 10.
+
+On a machine with little free memory, build JUCE with `-- /m:1 /p:CL_MPCount=2` (one project at
+a time, two compiler processes, about 3 GB).
+
+### The editor
+
+**Play view.** The instrument at an angle, drawn from the hardware design's tables in
+millimetres. Sounding bowls glow and show their (2,0) vibration pattern turning at the angle the
+engine reports; sounding bars light up.
+
+- *Glass:* press a rim to sound it (pen or touch pressure sets the finger load), slide across rims
+  for a glissando, several fingers at once. With the spindle stopped a bowl only sounds while the
+  finger rubs along its rim.
+- *Bars:* tap to strike; where along the bar sets the strike position; drag across bars for a
+  roll; holding keeps that bar's damper off.
+- Header: SUSTAIN, BRAKE (their lamps also follow MIDI pedals), SPINDLE and its speed (glass) or the
+  DAMPER tail (bars), MODIFY. Second row: presets (materials or mallet setups, then user presets,
+  with SAVE), the ROTATION strip (glass) and VIBRATO. A note strip C3–C6 latches notes and lights a
+  lamp for notes outside the drawn range. Level knob, output meters, LIMIT and MIDI lamps, voices.
+
+**Modify view.** A live cut-away (a bowl seen along the spindle with its band, coils and sensors;
+or a bar in side view with magnet, coil and sensor), a brushed-aluminium faceplate of lit switches
+and twelve knobs per instrument, an ADVANCED drawer with every parameter, and pedals, keyboard and
+meters. DONE returns to the play view.
+
+`test-plugin --snapshot out.png [glass|bars|modify|modify-bars]` renders the editor offscreen with a
+chord playing, for looking at the UI without a desktop session.
 
 ## Running
 
@@ -134,6 +167,8 @@ still holds with them compiled in.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The plugin shell (phase 2) will be built with JUCE, which is
-licensed separately: building it yourself needs a JUCE licence (the free Starter tier covers
-individuals) or the AGPLv3 option. The engine and reference tools do not use JUCE.
+MIT — see [LICENSE](LICENSE). The plugin is built with JUCE 9, which is licensed separately and
+fetched at configure time, never vendored: building it yourself needs a JUCE licence (the free
+Starter tier covers individuals) or the AGPLv3 option. The engine and reference tools do not use
+JUCE. The embedded IBM Plex fonts are under the SIL Open Font License 1.1
+([plugin/ui/fonts/OFL.txt](plugin/ui/fonts/OFL.txt)).

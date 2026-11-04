@@ -26,6 +26,17 @@ MagnetikaProcessor::MagnetikaProcessor()
     for (const auto& m : engineMappings()) mappedRaw_.push_back(get(m.paramId));
     mappedLast_.assign(mappedRaw_.size(), 0.0f);
     spindleOnRaw_ = get(id::spindleOn);
+    startTimerHz(20);
+}
+
+void MagnetikaProcessor::syncProgramChange() {
+    const int prog = pendingProgram_.exchange(-1);
+    if (prog < 0) return;
+    if (auto* prm = apvts_.getParameter(id::instrument)) {
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost(prm->convertTo0to1(static_cast<float>(prog)));
+        prm->endChangeGesture();
+    }
 }
 
 bool MagnetikaProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
@@ -123,14 +134,23 @@ void MagnetikaProcessor::pushPerf() {
 }
 
 bool MagnetikaProcessor::pushUiEvent(const UiEvent& e) {
-    const auto scope = uiFifo_.write(1);
-    if (scope.blockSize1 + scope.blockSize2 < 1) return false;  // full: drop rather than block
-    uiBuf_[static_cast<size_t>(scope.blockSize1 > 0 ? scope.startIndex1 : scope.startIndex2)] = e;
-    return true;
+    {
+        const auto scope = uiFifo_.write(1);
+        if (scope.blockSize1 + scope.blockSize2 >= 1) {
+            uiBuf_[static_cast<size_t>(scope.blockSize1 > 0 ? scope.startIndex1 : scope.startIndex2)] = e;
+            return true;
+        }
+    }
+    // full: drop it, but never drop a release
+    if (e.type == UiEvent::NoteOff) releaseAllPending_.store(true);
+    if (e.type == UiEvent::AllOff) allOffPending_.store(true);
+    return false;
 }
 
 // Touch gestures from the editor, applied at the start of the block.
 void MagnetikaProcessor::drainUiEvents() {
+    // a release refused by a full queue is newer than everything queued: apply it last
+    const bool allOff = allOffPending_.exchange(false), releaseAll = releaseAllPending_.exchange(false);
     const auto scope = uiFifo_.read(uiFifo_.getNumReady());
     auto apply = [this](const UiEvent& e) {
         switch (e.type) {
@@ -144,11 +164,14 @@ void MagnetikaProcessor::drainUiEvents() {
     };
     for (int i = 0; i < scope.blockSize1; ++i) apply(uiBuf_[static_cast<size_t>(scope.startIndex1 + i)]);
     for (int i = 0; i < scope.blockSize2; ++i) apply(uiBuf_[static_cast<size_t>(scope.startIndex2 + i)]);
+    if (allOff) synth_->allOff();
+    else if (releaseAll) synth_->releaseAll();
 }
 
 void MagnetikaProcessor::publishDisplay(const juce::AudioBuffer<float>& buffer) {
     const int n = buffer.getNumSamples();
-    dispSeq_.fetch_add(1, std::memory_order_acq_rel);  // odd: writing
+    dispSeq_.fetch_add(1, std::memory_order_relaxed);  // odd: writing
+    std::atomic_thread_fence(std::memory_order_release);
     disp_.count = synth_->snapshot(disp_.voices.data(), static_cast<int>(disp_.voices.size()));
     disp_.peakL = n > 0 ? buffer.getMagnitude(0, 0, n) : 0.0f;
     disp_.peakR = n > 0 && buffer.getNumChannels() > 1 ? buffer.getMagnitude(1, 0, n) : disp_.peakL;
@@ -159,19 +182,22 @@ void MagnetikaProcessor::publishDisplay(const juce::AudioBuffer<float>& buffer) 
     disp_.rotation = perf_.rotation;
     disp_.vibDepth = perf_.vibDepth;
     disp_.instrument = perf_.instrument;
-    dispSeq_.fetch_add(1, std::memory_order_acq_rel);  // even: consistent
+    dispSeq_.fetch_add(1, std::memory_order_release);  // even: consistent
 }
 
 MagnetikaProcessor::Display MagnetikaProcessor::readDisplay() const {
     Display copy;
-    for (int attempt = 0; attempt < 8; ++attempt) {
+    for (int attempt = 0; attempt < 64; ++attempt) {
         const auto s1 = dispSeq_.load(std::memory_order_acquire);
         if (s1 & 1u) continue;
         copy = disp_;
         std::atomic_thread_fence(std::memory_order_acquire);
-        if (dispSeq_.load(std::memory_order_acquire) == s1) return copy;
+        if (dispSeq_.load(std::memory_order_relaxed) == s1) {
+            lastGood_ = copy;
+            return copy;
+        }
     }
-    return copy;  // a torn read only mis-draws one frame
+    return lastGood_;  // the writer kept winning: show the previous frame, not an empty one
 }
 
 // The browser player's MIDI map (see README), so the two are interchangeable.
@@ -222,6 +248,7 @@ void MagnetikaProcessor::handleMidi(const juce::MidiMessage& m) {
     if (m.isProgramChange()) {
         perf_.instrument = m.getProgramChangeNumber() % 2;
         pushPerf();
+        pendingProgram_.store(perf_.instrument);  // the parameter follows on the message thread
     }
 }
 

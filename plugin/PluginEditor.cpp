@@ -15,7 +15,7 @@ MagnetikaEditor::MagnetikaEditor(MagnetikaProcessor& p)
     setResizable(true, true);
     setResizeLimits(600, 400, 2400, 1600);
     if (auto* c = getConstrainer()) c->setFixedAspectRatio(static_cast<double>(kDesignW) / kDesignH);
-    setSize(1050, 700);
+    setSize(990, 660);  // fits a 768-px-high laptop screen with a DAW title bar
 }
 
 MagnetikaEditor::~MagnetikaEditor() { setLookAndFeel(nullptr); }

@@ -27,6 +27,7 @@ public:
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void clearLatches();
+    void releaseLatches();  // note-off every latched note, then clear
 
 private:
     juce::Rectangle<float> chipBounds(int midi) const;
@@ -87,8 +88,10 @@ private:
     float meterL_ = 0, meterR_ = 0;
 
     PresetStore store_;
-    int userSel_ = -1;  // index into store_.names() when a user preset is selected, else -1
+    juce::StringArray userNames_;  // refreshed on demand, not every paint
+    int userSel_ = -1;  // index into userNames_ when a user preset is selected, else -1
     std::unique_ptr<juce::AlertWindow> saveDialog_;
+    int shownInstrument_ = -1;
 
     GlassView glass_;
     BarsView bars_;

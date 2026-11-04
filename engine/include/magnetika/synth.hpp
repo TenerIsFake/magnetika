@@ -59,6 +59,8 @@ public:
     void noteOn(int midi, double vel);
     void noteOff(int midi);
     void allOff();
+    // Releases every held note (as noteOff on each), leaving tails to ring.
+    void releaseAll();
 
     // Renders n samples into L/R (overwrites), then the tanh output limiter.
     void render(float* L, float* R, int n);

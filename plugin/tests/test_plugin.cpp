@@ -146,6 +146,27 @@ void testProgramChangeSelectsBars() {
                           {{0, juce::MidiMessage::programChange(1, 1)}, {0, juce::MidiMessage::noteOn(1, 69, 0.9f)}});
     // bars ring at once from the mallet; glass would still be building from the finger
     CHECK(rmsDb(r.L, 0.0, 0.05) > -50, "program 1 did not select the bars (level %.1f dB)", rmsDb(r.L, 0.0, 0.05));
+    // and the parameter follows, so the editor's buttons and the host see it
+    a.syncProgramChange();
+    CHECK(a.state().getRawParameterValue("instrument")->load() == 1.0f, "program change did not move the instrument parameter");
+    // the GLASS button then works (it was dead while the parameter still said glass);
+    // no re-prepare here, which would reset the engine from the parameters
+    juce::AudioBuffer<float> buf(2, 128);
+    juce::MidiBuffer none, on;
+    a.pushUiEvent({MagnetikaProcessor::UiEvent::AllOff, 0, 0});  // silence the bar
+    for (int b = 0; b < 4; ++b) { buf.clear(); a.processBlock(buf, none); }
+    auto* prm = a.state().getParameter("instrument");
+    prm->setValueNotifyingHost(prm->convertTo0to1(0.0f));
+    on.clear();
+    on.addEvent(juce::MidiMessage::noteOn(1, 69, 0.9f), 0);
+    double sum = 0;
+    for (int b = 0; b < 18; ++b) {  // about 0.05 s
+        buf.clear();
+        a.processBlock(buf, b == 0 ? on : none);
+        sum += static_cast<double>(buf.getRMSLevel(0, 0, 128)) * buf.getRMSLevel(0, 0, 128);
+    }
+    const double glassDb = 10 * std::log10(sum / 18 + 1e-30);
+    CHECK(glassDb < rmsDb(r.L, 0.0, 0.05) - 10, "GLASS after a program change to bars still played bars (%.1f dB)", glassDb);
 }
 
 void testStateRoundTrip() {
@@ -316,6 +337,83 @@ void testBarsStrikeAndRoll() {
     CHECK(held.empty(), "lifting the mallet should release every bar (%zu still held)", held.size());
 }
 
+void testFullUiQueueNeverStrandsANote() {
+    // a burst of gestures fills the queue; the release that does not fit must still release
+    MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    p.prepareToPlay(SR, 256);
+    p.pushUiEvent({UiEvent::NoteOn, 72, 0.8f});
+    auto held = soundingNotes(p, 2);
+    CHECK(held.count(72) == 1, "C5 should be held before the burst");
+    int pushed = 0;
+    while (pushed < 100000 && p.pushUiEvent({UiEvent::Touch, 72, 0.9f})) ++pushed;
+    CHECK(!p.pushUiEvent({UiEvent::NoteOff, 72, 0}), "the queue never filled (%d events)", pushed);
+    held = soundingNotes(p, 2);
+    CHECK(held.empty(), "a NoteOff refused by a full queue left %zu note(s) held", held.size());
+}
+
+} // namespace
+
+namespace magnetika::plugin {
+struct GlassViewTestAccess {
+    static void press(GlassView& v, int midi) { v.press(midi, 1.0f); }
+    static void release(GlassView& v, int midi) { v.release(midi); }
+};
+struct BarsViewTestAccess {
+    static void strike(BarsView& v, int midi) { v.strike(midi, 0.8f, 0.0f); }
+    static void lift(BarsView& v, int midi) { v.lift(midi); }
+};
+} // namespace magnetika::plugin
+
+namespace {
+
+void testTwoFingersOnOneNote() {
+    using magnetika::plugin::GlassViewTestAccess;
+    using magnetika::plugin::BarsViewTestAccess;
+    {   // two fingers on one rim: lifting one keeps the note, lifting both releases it
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        p.prepareToPlay(SR, 256);
+        magnetika::plugin::GlassView view(p);
+        view.setSize(1200, 624);
+        GlassViewTestAccess::press(view, 72);
+        GlassViewTestAccess::press(view, 72);
+        GlassViewTestAccess::release(view, 72);
+        auto held = soundingNotes(p, 5);
+        CHECK(held.count(72) == 1, "lifting one of two fingers released the rim");
+        GlassViewTestAccess::release(view, 72);
+        held = soundingNotes(p, 5);
+        CHECK(held.empty(), "lifting both fingers should release the rim");
+        // hidden mid-touch (an instrument switch) there is no mouseUp: the rim must not stay counted
+        view.setVisible(true);
+        GlassViewTestAccess::press(view, 72);
+        view.mouseDown(mouseAt(view, view.rimTopOf(76), false));
+        view.setVisible(false);
+        held = soundingNotes(p, 5);
+        CHECK(held.empty(), "hiding the view should release every finger (%zu still held)", held.size());
+        GlassViewTestAccess::press(view, 72);
+        held = soundingNotes(p, 5);
+        CHECK(held.count(72) == 1, "a press after the view was hidden mid-touch made no sound");
+        GlassViewTestAccess::release(view, 72);
+    }
+    {   // two mallets on one bar: each strike sounds, the damper returns after the last
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        setParam(p, "instrument", 1.0f);
+        p.prepareToPlay(SR, 256);
+        magnetika::plugin::BarsView view(p);
+        view.setSize(1200, 624);
+        BarsViewTestAccess::strike(view, 69);
+        BarsViewTestAccess::strike(view, 69);
+        BarsViewTestAccess::lift(view, 69);
+        auto held = soundingNotes(p, 5);
+        CHECK(held.count(69) == 1, "lifting one of two mallets dropped the damper on the bar");
+        BarsViewTestAccess::lift(view, 69);
+        held = soundingNotes(p, 5);
+        CHECK(held.empty(), "lifting both mallets should release the bar");
+    }
+}
+
 void testPresetStoreRoundTrip() {
     const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("magnetika-preset-test");
     dir.deleteRecursively();
@@ -391,6 +489,8 @@ int main(int argc, char** argv) {
     testGlassTouchAndGlissando();
     testBarsStrikeAndRoll();
     testPresetStoreRoundTrip();
+    testFullUiQueueNeverStrandsANote();
+    testTwoFingersOnOneNote();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

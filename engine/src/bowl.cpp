@@ -63,6 +63,7 @@ void BowlPhysics::noteOn(double vel) {
         omF_ = p.fingerSpeed;
     }
     velScale_ = 0.4 + 0.8 * vel;
+    touch_ = 1.0;  // a new strike starts at full finger load; a touch screen sets it after noteOn
     psi_ = thF_;
     // Nyquist guard, decided once per note so a mode never pops in or out. The
     // 5 % margin covers pitch bend (+40 c) and vibrato on top of the note.

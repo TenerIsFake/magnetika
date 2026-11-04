@@ -436,6 +436,18 @@ void testTouchScalesTheFinger() {
     };
     const double full = level(1.0), light = level(0.3);
     CHECK(light < full - 3, "touch 0.3 not quieter than 1.0: %.1f vs %.1f dB", light, full);
+    // a new strike starts at full touch: a light touch must not carry over to the
+    // next note on the same bowl (a MIDI note after a touch-screen note)
+    Synth s(SR);
+    playerDefaults(s);
+    s.noteOn(72, 0.8);
+    s.setNoteTouch(72, 0.3);
+    renderLeft(s, 0.3);
+    s.noteOff(72);
+    renderLeft(s, 0.2);
+    s.noteOn(72, 0.8);
+    const double again = runBlocks(s, 1.5, [](int) {}).energyDb(1.0, 1.5);
+    CHECK(again > (full + light) / 2, "retriggered note kept the light touch: %.1f dB (full %.1f, light %.1f)", again, full, light);
 }
 
 void testStillFingerOnStoppedSpindleStopsExciting() {

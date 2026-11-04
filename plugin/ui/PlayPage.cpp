@@ -86,6 +86,11 @@ void NoteStrip::mouseDown(const juce::MouseEvent& e) {
 
 void NoteStrip::clearLatches() { latched_.clear(); repaint(); }
 
+void NoteStrip::releaseLatches() {
+    for (int m : latched_) proc_.pushUiEvent({MagnetikaProcessor::UiEvent::NoteOff, m, 0});
+    clearLatches();
+}
+
 // ------------------------------------------------------------------ PlayPage
 
 namespace {
@@ -150,12 +155,14 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
 
     addAndMakeVisible(glass_);
     addChildComponent(bars_);
-    glass_.setMaterial(static_cast<int>(st.state.getProperty(materialProp, 3)));
+    glass_.setMaterial(juce::jlimit(0, static_cast<int>(materials().size()) - 1, static_cast<int>(st.state.getProperty(materialProp, 3))));
     strip_.levelOf = [this](int m) { return instrument() == 0 ? glass_.levelOf(m) : bars_.levelOf(m); };
     strip_.below = [this] { return instrument() == 0 ? glass_.outsideBelow() : bars_.outsideBelow(); };
     strip_.above = [this] { return instrument() == 0 ? glass_.outsideAbove() : bars_.outsideAbove(); };
     addAndMakeVisible(strip_);
     allOffBtn_.onClick = [this] {
+        glass_.releaseAllTouches();  // forget any finger or mallet still down
+        bars_.releaseAllTouches();
         proc_.pushUiEvent({MagnetikaProcessor::UiEvent::AllOff, 0, 0});
         strip_.clearLatches();
     };
@@ -170,6 +177,7 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
     levelGlassAtt_ = std::make_unique<SA>(st, "g_master", levelGlass_);
     levelBarsAtt_ = std::make_unique<SA>(st, "b_master", levelBars_);
     levelGlass_.setVisible(true);
+    userNames_ = store_.names();
     startTimerHz(15);
 }
 
@@ -187,20 +195,29 @@ void PlayPage::setParam(const char* pid, double v) {
 
 void PlayPage::setInstrument(int i) { setParam(id::instrument, i); }
 
+namespace {
+// A state property used as an index: clamp it, since a preset or host state from
+// another version could hold anything.
+int clampedProp(const juce::ValueTree& st, const juce::Identifier& prop, int def, int count) {
+    return juce::jlimit(0, count - 1, static_cast<int>(st.getProperty(prop, def)));
+}
+} // namespace
+
 // Steps through the factory entries (materials or mallet setups), then the user presets.
 void PlayPage::stepPreset(int delta) {
     auto& st = proc_.state();
+    userNames_ = store_.names();  // the folder may have changed
+    if (userSel_ >= userNames_.size()) userSel_ = -1;
     const bool glass = instrument() == 0;
     const int factory = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
-    const auto users = store_.names();
-    const int total = factory + users.size();
+    const int total = factory + userNames_.size();
     const int current = userSel_ >= 0 ? factory + userSel_
-                                      : static_cast<int>(st.state.getProperty(glass ? materialProp : barPresetProp, glass ? 3 : 0));
+                                      : clampedProp(st.state, glass ? materialProp : barPresetProp, glass ? 3 : 0, factory);
     const int next = ((current + delta) % total + total) % total;
     if (next >= factory) {
         userSel_ = next - factory;
-        store_.load(users[userSel_], st);
-        glass_.setMaterial(static_cast<int>(st.state.getProperty(materialProp, 3)));
+        if (!store_.load(userNames_[userSel_], st)) userSel_ = -1;
+        glass_.setMaterial(clampedProp(st.state, materialProp, 3, static_cast<int>(materials().size())));
     } else {
         userSel_ = -1;
         applyFactory(next);
@@ -210,22 +227,35 @@ void PlayPage::stepPreset(int delta) {
 
 void PlayPage::savePreset() {
     saveDialog_ = std::make_unique<juce::AlertWindow>("Save preset", "Name this setup. It is saved with every setting.", juce::MessageBoxIconType::NoIcon, this);
-    saveDialog_->addTextEditor("name", "My setup", "Preset name");
+    saveDialog_->addTextEditor("name", "", "Preset name");
     saveDialog_->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     saveDialog_->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([this](int result) {
-        if (result == 1 && saveDialog_ != nullptr) {
-            const auto name = juce::File::createLegalFileName(saveDialog_->getTextEditorContents("name").trim());
-            if (store_.save(name, proc_.state())) userSel_ = store_.names().indexOf(name);
+    // The editor can be closed while the dialog is open; JUCE then runs this
+    // callback after PlayPage is gone, so it must not touch a dead `this`.
+    juce::Component::SafePointer<PlayPage> self(this);
+    saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([self](int result) {
+        if (self == nullptr) return;
+        if (result == 1 && self->saveDialog_ != nullptr) {
+            auto name = juce::File::createLegalFileName(self->saveDialog_->getTextEditorContents("name").trim());
+            if (name.isEmpty()) name = "My setup";
+            // never overwrite silently: "Warm", "Warm 2", "Warm 3", ...
+            const auto existing = self->store_.names();
+            juce::String unique = name;
+            for (int n = 2; existing.contains(unique, true); ++n) unique = name + " " + juce::String(n);
+            if (self->store_.save(unique, self->proc_.state())) {
+                self->userNames_ = self->store_.names();
+                self->userSel_ = self->userNames_.indexOf(unique, true);
+            }
         }
-        saveDialog_.reset();
-        repaint();
+        self->saveDialog_.reset();
+        self->repaint();
     }), false);
 }
 
 void PlayPage::applyFactory(int idx) {
     auto& st = proc_.state();
     if (instrument() == 0) {
+        idx = juce::jlimit(0, static_cast<int>(materials().size()) - 1, idx);
         st.state.setProperty(materialProp, idx, nullptr);
         const auto& m = materials()[static_cast<size_t>(idx)];
         setParam("g_Q2", m.Q2);
@@ -233,6 +263,7 @@ void PlayPage::applyFactory(int idx) {
         setParam("g_split", m.split);
         glass_.setMaterial(idx);
     } else {
+        idx = juce::jlimit(0, static_cast<int>(barPresets().size()) - 1, idx);
         st.state.setProperty(barPresetProp, idx, nullptr);
         const auto& b = barPresets()[static_cast<size_t>(idx)];
         setParam("b_strikeF", b.strikeF);
@@ -265,12 +296,11 @@ void PlayPage::paint(juce::Graphics& g) {
     g.drawText(juce::String(vibrato_.getValue(), 1) + juce::String::fromUTF8(" \xc2\xa2"), vibText_, juce::Justification::centredRight);
 
     // preset readout: a factory entry, or a user preset after them
-    const auto users = store_.names();
+    const auto& users = userNames_;
     const int factory = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
     const bool user = userSel_ >= 0 && userSel_ < users.size();
     const int idx = user ? factory + userSel_
-                         : glass ? static_cast<int>(proc_.state().state.getProperty(materialProp, 3))
-                                 : static_cast<int>(proc_.state().state.getProperty(barPresetProp, 0));
+                         : clampedProp(proc_.state().state, glass ? materialProp : barPresetProp, glass ? 3 : 0, factory);
     const juce::String name = user ? users[userSel_]
                                    : glass ? juce::String(materials()[static_cast<size_t>(idx)].name)
                                            : juce::String(barPresets()[static_cast<size_t>(idx)].name);
@@ -369,6 +399,13 @@ void PlayPage::timerCallback() {
     if (d.midiCount != lastMidiCount_) {
         lastMidiCount_ = d.midiCount;
         midiLampUntil_ = juce::Time::getMillisecondCounterHiRes() + 150.0;
+    }
+    // latched notes belong to the instrument they were latched on, so release them on a switch
+    // (buttons, automation, or a MIDI program change, which moves the parameter too)
+    const int shown = instrument();
+    if (shown != shownInstrument_) {
+        if (shownInstrument_ >= 0) strip_.releaseLatches();
+        shownInstrument_ = shown;
     }
     levelGlass_.setVisible(instrument() == 0);
     levelBars_.setVisible(instrument() != 0);

@@ -25,6 +25,10 @@ public:
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
+    void visibilityChanged() override;
+
+    // Lift every finger now (view hidden or closed, ALL OFF): no rim stays counted as held.
+    void releaseAllTouches();
 
     // Glass optics follow the material preset (index into plugin::materials()).
     void setMaterial(int index);
@@ -40,6 +44,7 @@ public:
     }
 
 private:
+    friend struct GlassViewTestAccess;  // plugin/tests: multi-touch without a touch screen
     struct Bowl {
         int midi = 0;
         float r = 0;  // rim radius, mm
@@ -54,7 +59,14 @@ private:
         juce::Point<float> pos, last;
         double lastTime = 0, lastMoveTime = 0;
         float pressure = 0.85f;
+        float sentSpeed = -1, sentTouch = -1;  // last values sent, to avoid flooding the queue
+        bool zeroSent = false;
     };
+    void press(int midi, float pressure);    // per-note finger count: note on at the first finger
+    void release(int midi);                  // note off when the last finger leaves
+    void sendSpeed(Finger& f, float speed);
+    void sendTouch(Finger& f, float touch);
+    const juce::Image& glowSprite(size_t bowlIndex);
 
     juce::Point<float> project(float x, float y, float z) const;
     void build();
@@ -74,11 +86,18 @@ private:
     juce::Point<float> brass_;
     float brassAngle_ = 0;
 
+    float currentScale() const;  // physical pixels per component pixel, capped for the cache
     juce::Image cache_;
+    float cacheScale_ = 0;  // physical scale the cache was rendered at
+    float pendingScale_ = 0;  // a new scale is re-rendered once it holds for a timer tick (resize drags)
+    std::vector<juce::Image> glow_;          // per bowl, a pre-blurred rim (single channel), built on demand
+    std::vector<juce::Rectangle<float>> glowBounds_;
     int material_ = 3;
     std::map<int, Finger> fingers_;  // by touch source index
+    std::map<int, int> fingersOn_;   // midi -> fingers holding it
     std::array<float, 128> level_{};
     std::array<float, 128> pattern_{};
+    std::array<float, 128> paintedLevel_{}, paintedPattern_{};  // as last painted
     bool below_ = false, above_ = false;
     float beltPhase_ = 0;
 };

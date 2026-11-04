@@ -14,10 +14,10 @@
 
 namespace magnetika::plugin {
 
-class MagnetikaProcessor : public juce::AudioProcessor {
+class MagnetikaProcessor : public juce::AudioProcessor, private juce::Timer {
 public:
     MagnetikaProcessor();
-    ~MagnetikaProcessor() override = default;
+    ~MagnetikaProcessor() override { stopTimer(); }
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -44,6 +44,10 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
     juce::AudioProcessorValueTreeState& state() { return apvts_; }
+    // A MIDI program change moves the `instrument` parameter, so the parameter is the one
+    // source of truth for the editor and the host. The audio thread only records it; this
+    // (message thread, on a 20 Hz timer) writes it.
+    void syncProgramChange();
     juce::MidiKeyboardState& keyboardState() { return keyboard_; }
 
     // ---- editor -> audio: touch gestures (message thread only; single producer)
@@ -112,12 +116,19 @@ private:
     std::atomic<float>* spindleOnRaw_ = nullptr;
     float lastSpindleOn_ = -1;
 
-    juce::AbstractFifo uiFifo_{256};
-    std::array<UiEvent, 256> uiBuf_{};
+    juce::AbstractFifo uiFifo_{1024};
+    std::array<UiEvent, 1024> uiBuf_{};
+    // A release must never be lost: if the queue is full when a NoteOff / AllOff
+    // arrives (a host that has stopped calling processBlock), these flags make
+    // the next block release every note / silence everything instead.
+    std::atomic<bool> releaseAllPending_{false}, allOffPending_{false};
+    std::atomic<int> pendingProgram_{-1};  // instrument from a MIDI program change, not yet in the parameter
+    void timerCallback() override { syncProgramChange(); }
 
     // seqlock: odd while the audio thread writes, even when the copy is consistent
     std::atomic<std::uint32_t> dispSeq_{0};
     Display disp_;
+    mutable Display lastGood_;  // message thread only
     std::uint32_t midiCount_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MagnetikaProcessor)

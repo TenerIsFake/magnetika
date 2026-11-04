@@ -69,7 +69,7 @@ void RangeStrip::paint(juce::Graphics& g) {
 
 void Cutaway::timerCallback() {
     d_ = proc_.readDisplay();
-    const bool glass = d_.instrument == 0;
+    const bool glass = shownInstrument == 0;
     float best = 0;
     int pick = -1;
     for (int i = 0; i < d_.count; ++i) {
@@ -92,7 +92,7 @@ void Cutaway::timerCallback() {
 
 void Cutaway::paint(juce::Graphics& g) {
     theme::drawViewport(g, getLocalBounds().toFloat());
-    if (d_.instrument == 0) paintGlass(g);
+    if (shownInstrument == 0) paintGlass(g);
     else paintBars(g);
 }
 
@@ -566,7 +566,7 @@ void ModifyPage::paint(juce::Graphics& g) {
     g.setColour(theme::inkFaint);
     g.setFont(theme::sans(11.0f).withExtraKerningFactor(0.16f));
     g.drawText(glass ? "MATERIAL" : "BAR STOCK", info.removeFromLeft(80), juce::Justification::centredLeft);
-    const int mat = static_cast<int>(proc_.state().state.getProperty(materialProp, 3));
+    const int mat = juce::jlimit(0, static_cast<int>(materials().size()) - 1, static_cast<int>(proc_.state().state.getProperty(materialProp, 3)));
     theme::drawReadout(g, glass ? juce::String(materials()[static_cast<size_t>(mat)].name) : juce::String::fromUTF8("6061-T6 \xc2\xb7 38 \xc3\x97 12"),
                        info.removeFromLeft(196).reduced(0, 9), 12.5f);
     info.removeFromLeft(18);
@@ -637,6 +637,7 @@ void ModifyPage::resized() {
 
 void ModifyPage::timerCallback() {
     d_ = proc_.readDisplay();
+    cutaway_.shownInstrument = instrument();
     const bool glass = instrument() == 0;
     glassBtn_.setToggleState(glass, juce::dontSendNotification);
     barsBtn_.setToggleState(!glass, juce::dontSendNotification);

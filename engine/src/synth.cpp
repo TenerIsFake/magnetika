@@ -177,6 +177,16 @@ int Synth::activeVoices() const {
     return n;
 }
 
+void Synth::releaseAll() {
+    for (int i = 0; i < numVoices_; ++i) {
+        Voice& v = voices_[i];
+        if (v.kind == Voice::Kind::None || !v.held) continue;
+        v.held = false;
+        if (v.kind == Voice::Kind::Bowl) v.bowl.noteOff();
+        else v.bar.noteOff();
+    }
+}
+
 void Synth::setNoteTouch(int midi, double touch) {
     for (int i = 0; i < numVoices_; ++i)
         if (voices_[i].kind == Voice::Kind::Bowl && voices_[i].midi == midi) voices_[i].bowl.setTouch(touch);

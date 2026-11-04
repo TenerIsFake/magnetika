@@ -73,7 +73,27 @@ GlassView::GlassView(MagnetikaProcessor& p) : proc_(p) {
     startTimerHz(30);
 }
 
-GlassView::~GlassView() { stopTimer(); }
+GlassView::~GlassView() {
+    stopTimer();
+    releaseAllTouches();
+}
+
+float GlassView::currentScale() const {
+    return juce::jlimit(1.0f, 2.5f, juce::Component::getApproximateScaleFactorForComponent(this));
+}
+
+void GlassView::visibilityChanged() {
+    if (!isVisible()) releaseAllTouches();  // a hidden view gets no mouseUp
+}
+
+void GlassView::releaseAllTouches() {
+    for (const auto& [midi, count] : fingersOn_) {
+        juce::ignoreUnused(count);
+        send(MagnetikaProcessor::UiEvent::NoteOff, midi, 0);
+    }
+    fingers_.clear();
+    fingersOn_.clear();
+}
 
 bool GlassView::spindleOn() const { return proc_.state().getRawParameterValue(id::spindleOn)->load() > 0.5f; }
 
@@ -225,7 +245,11 @@ void GlassView::build() {
 
 void GlassView::renderStatic() {
     if (getWidth() <= 0 || getHeight() <= 0) return;
-    const float scale = juce::Component::getApproximateScaleFactorForComponent(this);
+    // the editor scales this view with a transform; render at the physical scale (capped)
+    const float scale = currentScale();
+    cacheScale_ = pendingScale_ = scale;
+    glow_.assign(bowls_.size(), {});
+    glowBounds_.assign(bowls_.size(), {});
     cache_ = juce::Image(juce::Image::ARGB, juce::roundToInt(getWidth() * scale), juce::roundToInt(getHeight() * scale), true);
     juce::Graphics g(cache_);
     g.addTransform(juce::AffineTransform::scale(scale));
@@ -385,7 +409,27 @@ juce::Path GlassView::patternPath(const Bowl& b, float angle, float level) const
     return polyPath(pts, true);
 }
 
+// The glow around a sounding rim, blurred once and reused every frame (blurring per
+// frame cost ~45 ms with 16 notes, over the 33 ms frame budget).
+const juce::Image& GlassView::glowSprite(size_t i) {
+    if (i < glow_.size() && !glow_[i].isValid()) {
+        const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
+        const int radius = juce::roundToInt(6 * k) + 1;
+        auto bounds = bowls_[i].mouth.getBounds().expanded(10 * k + static_cast<float>(radius) * 2);
+        glowBounds_[i] = bounds;
+        const float s = cacheScale_ > 0 ? cacheScale_ : 1.0f;
+        juce::Image img(juce::Image::SingleChannel, std::max(1, juce::roundToInt(bounds.getWidth() * s)),
+                        std::max(1, juce::roundToInt(bounds.getHeight() * s)), true, juce::SoftwareImageType());
+        juce::Graphics g(img);
+        g.addTransform(juce::AffineTransform::translation(-bounds.getX(), -bounds.getY()).scaled(s));
+        softStroke(g, bowls_[i].mouth, juce::Colours::white, 10 * k, radius);
+        glow_[i] = img;
+    }
+    return glow_[i];
+}
+
 void GlassView::paint(juce::Graphics& g) {
+    if (!cache_.isValid()) renderStatic();  // a changed scale is re-rendered from the timer, once it settles
     if (cache_.isValid()) g.drawImage(cache_, getLocalBounds().toFloat());
     const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
     const auto accent = theme::amber;
@@ -421,7 +465,10 @@ void GlassView::paint(juce::Graphics& g) {
             g.fillPath(pat);
             g.setColour(accent.withAlpha(0.9f * L));
             g.strokePath(pat, juce::PathStrokeType(1.5f * k));
-            softStroke(g, b.mouth, accent.withAlpha(0.9f * L), 10 * k, juce::roundToInt(6 * k) + 1);
+            const size_t bi = static_cast<size_t>(b.midi - kLow);
+            const auto& sprite = glowSprite(bi);
+            g.setColour(accent.withAlpha(0.9f * L));
+            g.drawImage(sprite, glowBounds_[bi], juce::RectanglePlacement::stretchToFit, true);
             g.setColour(juce::Colour(0xffffe9c2).withAlpha(0.5f + 0.5f * L));
             g.strokePath(b.mouth, juce::PathStrokeType(1.6f * k));
         }
@@ -480,6 +527,40 @@ int GlassView::hit(juce::Point<float> p, juce::Point<float>* onRim) const {
 
 void GlassView::send(MagnetikaProcessor::UiEvent::Type t, int midi, float v) { proc_.pushUiEvent({t, midi, v}); }
 
+// Two fingers on one rim are one held note: it sounds at the first and is
+// released only when the last finger leaves.
+void GlassView::press(int midi, float pressure) {
+    using T = MagnetikaProcessor::UiEvent;
+    const bool first = fingersOn_[midi]++ == 0;
+    if (first) send(T::NoteOn, midi, 0.8f);
+    send(T::Touch, midi, pressure);
+    // a still finger on a still bowl: silent until it rubs (a second finger leaves the first one's rub alone)
+    if (first && !spindleOn()) send(T::FingerSpeed, midi, 0.0f);
+}
+
+void GlassView::release(int midi) {
+    auto it = fingersOn_.find(midi);
+    if (it == fingersOn_.end()) return;
+    if (--it->second <= 0) {
+        fingersOn_.erase(it);
+        send(MagnetikaProcessor::UiEvent::NoteOff, midi, 0);
+    }
+}
+
+void GlassView::sendSpeed(Finger& f, float speed) {
+    // only meaningful changes, so a long drag cannot fill the event queue
+    if (std::abs(speed - f.sentSpeed) < 0.25f && !(speed == 0.0f && f.sentSpeed != 0.0f)) return;
+    f.sentSpeed = speed;
+    f.zeroSent = speed == 0.0f;
+    send(MagnetikaProcessor::UiEvent::FingerSpeed, f.midi, speed);
+}
+
+void GlassView::sendTouch(Finger& f, float touch) {
+    if (std::abs(touch - f.sentTouch) < 0.03f) return;
+    f.sentTouch = touch;
+    send(MagnetikaProcessor::UiEvent::Touch, f.midi, touch);
+}
+
 void GlassView::mouseDown(const juce::MouseEvent& e) {
     juce::Point<float> rim;
     const int m = hit(e.position, &rim);
@@ -490,10 +571,10 @@ void GlassView::mouseDown(const juce::MouseEvent& e) {
     f.last = e.position;
     f.lastTime = f.lastMoveTime = juce::Time::getMillisecondCounterHiRes();
     f.pressure = e.isPressureValid() ? juce::jlimit(0.2f, 1.6f, 0.4f + 1.2f * e.pressure) : 1.0f;
-    using T = MagnetikaProcessor::UiEvent;
-    send(T::NoteOn, m, 0.8f);
-    send(T::Touch, m, f.pressure);
-    if (!spindleOn()) send(T::FingerSpeed, m, 0.0f);  // a still finger on a still bowl: silent until it rubs
+    f.sentTouch = f.pressure;
+    f.sentSpeed = spindleOn() ? -1.0f : 0.0f;
+    f.zeroSent = !spindleOn();
+    press(m, f.pressure);
     fingers_[e.source.getIndex()] = f;
     repaint();
 }
@@ -502,29 +583,29 @@ void GlassView::mouseDrag(const juce::MouseEvent& e) {
     auto it = fingers_.find(e.source.getIndex());
     if (it == fingers_.end()) return;
     Finger& f = it->second;
-    using T = MagnetikaProcessor::UiEvent;
     const double now = juce::Time::getMillisecondCounterHiRes();
     juce::Point<float> rim;
     const int m = hit(e.position, &rim);
     if (m >= 0 && m != f.midi) {  // slid onto the next rim: glissando
-        send(T::NoteOff, f.midi, 0);
-        send(T::NoteOn, m, 0.8f);
-        send(T::Touch, m, f.pressure);
-        if (!spindleOn()) send(T::FingerSpeed, m, 0.0f);
+        release(f.midi);
         f.midi = m;
+        f.sentSpeed = spindleOn() ? -1.0f : 0.0f;
+        f.sentTouch = f.pressure;
+        press(m, f.pressure);
     }
     if (m >= 0) f.pos = rim;
     if (e.isPressureValid()) {
         f.pressure = juce::jlimit(0.2f, 1.6f, 0.4f + 1.2f * e.pressure);
-        send(T::Touch, f.midi, f.pressure);
+        sendTouch(f, f.pressure);
     }
     if (!spindleOn()) {
-        // rubbing: angular speed along this rim, rad/s, from the pointer speed
-        const float dt = static_cast<float>(std::max(1.0, now - f.lastTime)) / 1000.0f;
+        // rubbing: angular speed along this rim, rad/s, from the pointer speed over
+        // the time since the last drag event (never reset by the idle timer)
+        const float dt = static_cast<float>(juce::jlimit(1.0, 50.0, now - f.lastTime)) / 1000.0f;  // a pause is not a slow rub
         const auto& b = bowls_[static_cast<size_t>(f.midi - kLow)];
-        const float speed = e.position.getDistanceFrom(f.last) / dt / std::max(1.0f, b.R * 0.6f);
-        send(T::FingerSpeed, f.midi, juce::jlimit(0.0f, 12.0f, speed));
-        if (e.position.getDistanceFrom(f.last) > 0.5f) f.lastMoveTime = now;
+        const float moved = e.position.getDistanceFrom(f.last);
+        sendSpeed(f, juce::jlimit(0.0f, 12.0f, moved / dt / std::max(1.0f, b.R * 0.6f)));
+        if (moved > 0.5f) f.lastMoveTime = now;
     }
     f.last = e.position;
     f.lastTime = now;
@@ -534,7 +615,7 @@ void GlassView::mouseDrag(const juce::MouseEvent& e) {
 void GlassView::mouseUp(const juce::MouseEvent& e) {
     auto it = fingers_.find(e.source.getIndex());
     if (it == fingers_.end()) return;
-    send(MagnetikaProcessor::UiEvent::NoteOff, it->second.midi, 0);
+    release(it->second.midi);
     fingers_.erase(it);
     repaint();
 }
@@ -544,30 +625,67 @@ float GlassView::levelOf(int midi) const { return midi >= 0 && midi < 128 ? leve
 void GlassView::timerCallback() {
     const auto d = proc_.readDisplay();
     std::array<float, 128> lvl{};
-    below_ = above_ = false;
+    std::array<float, 128> pat = pattern_;
+    bool below = false, above = false;
     for (int i = 0; i < d.count; ++i) {
         const auto& v = d.voices[static_cast<size_t>(i)];
         if (!v.glass || v.midi < 0 || v.midi > 127) continue;
         const float L = levelFromEnv(v.level);
         lvl[static_cast<size_t>(v.midi)] = std::max(lvl[static_cast<size_t>(v.midi)], L);
-        pattern_[static_cast<size_t>(v.midi)] = v.pattern;
-        if (L > 0.04f && v.midi < kLow) below_ = true;
-        if (L > 0.04f && v.midi > kHigh) above_ = true;
+        pat[static_cast<size_t>(v.midi)] = v.pattern;
+        if (L > 0.04f && v.midi < kLow) below = true;
+        if (L > 0.04f && v.midi > kHigh) above = true;
+    }
+    // repaint only when something visible changed (an idle view costs nothing)
+    // (against the last painted frame, so a slow decay still repaints, and goes dark at the end)
+    bool changed = !fingers_.empty() || below != below_ || above != above_;
+    for (size_t m = 0; m < 128 && !changed; ++m)
+        changed = std::abs(lvl[m] - paintedLevel_[m]) > 0.004f || (lvl[m] >= 0.04f) != (paintedLevel_[m] >= 0.04f) ||
+                  (lvl[m] >= 0.04f && std::abs(pat[m] - paintedPattern_[m]) > 0.002f);
+    // a new display scale (window resized): re-render the static layer once it settles
+    const float scale = currentScale();
+    if (std::abs(scale - cacheScale_) > 0.05f) {
+        if (std::abs(scale - pendingScale_) < 0.01f) {
+            renderStatic();
+            changed = true;
+        }
+        pendingScale_ = scale;
     }
     level_ = lvl;
+    pattern_ = pat;
+    below_ = below;
+    above_ = above;
     // a finger that has stopped on a stopped spindle stops exciting its bowl
     if (!spindleOn()) {
         const double now = juce::Time::getMillisecondCounterHiRes();
         for (auto& [idx, f] : fingers_) {
-            juce::ignoreUnused(idx);
-            if (now - f.lastMoveTime > 80.0 && now - f.lastTime > 80.0) {
-                send(MagnetikaProcessor::UiEvent::FingerSpeed, f.midi, 0.0f);
-                f.lastTime = now;
+            if (f.zeroSent || now - f.lastMoveTime <= 80.0) continue;
+            // the speed is per note: another finger still rubbing this rim keeps it going
+            bool otherRubbing = false;
+            for (const auto& [j, o] : fingers_)
+                otherRubbing = otherRubbing || (j != idx && o.midi == f.midi && now - o.lastMoveTime <= 80.0);
+            if (otherRubbing) {
+                f.zeroSent = true;
+                continue;
             }
+            sendSpeed(f, 0.0f);
+            for (auto& [j, o] : fingers_)
+                if (j != idx && o.midi == f.midi) o.sentSpeed = 0.0f;  // so their next rub is sent
         }
     }
-    if (spindleOn()) beltPhase_ += 12.0f * 0.033f / 0.6f * proc_.state().getRawParameterValue("g_spin")->load();
-    repaint();
+    if (changed) {
+        paintedLevel_ = lvl;
+        paintedPattern_ = pat;
+        repaint();
+    }
+    if (spindleOn()) {  // the belt moves: repaint just the drive
+        beltPhase_ += 12.0f * 0.033f / 0.6f * proc_.state().getRawParameterValue("g_spin")->load();
+        if (!changed) {
+            const juce::Point<float> ends[] = {beltA_.getStart(), beltA_.getEnd(), beltB_.getStart(), beltB_.getEnd()};
+            const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
+            repaint(juce::Rectangle<float>::findAreaContainingPoints(ends, 4).expanded(14 * k + 4).toNearestInt());
+        }
+    }
 }
 
 } // namespace magnetika::plugin
