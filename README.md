@@ -28,7 +28,9 @@ for both maths libraries.
 | 1 | Plain C++ engine + offline renderer, matched against the reference | done |
 | 2 | JUCE VST3 + Standalone: CC map, parameters, 16 voices, material picker | done |
 | 3 | The instrument editor: play view (oblique 3-D, touch) and modify view (cut-away, faceplate) | done |
-| 4 | MPE, per-bowl tuning table, `.scl` microtuning | |
+| 4 | MPE: per-note bend, pressure and slide; MPE configuration messages | done |
+| 5 | Per-bowl tuning from the rev B table (each bowl and bar slightly different, as real ones are) | |
+| later | `.scl` microtuning | |
 
 ## Layout
 
@@ -95,14 +97,15 @@ engine reports; sounding bars light up.
 - Header: SUSTAIN, BRAKE (their lamps also follow MIDI pedals), SPINDLE and its speed (glass) or the
   DAMPER tail (bars), MODIFY. Second row: presets (materials or mallet setups, then user presets,
   with SAVE), the ROTATION strip (glass) and VIBRATO. A note strip C3–C6 latches notes and lights a
-  lamp for notes outside the drawn range. Level knob, output meters, LIMIT and MIDI lamps, voices.
+  lamp for notes outside the drawn range. Level knob, output meters, LIMIT and MIDI lamps, voices,
+  and the MPE switch (lit while MPE is active, including when a controller turned it on).
 
 **Modify view.** A live cut-away (a bowl seen along the spindle with its band, coils and sensors;
 or a bar in side view with magnet, coil and sensor), a brushed-aluminium faceplate of lit switches
 and twelve knobs per instrument, an ADVANCED drawer with every parameter, and pedals, keyboard and
 meters. DONE returns to the play view.
 
-`test-plugin --snapshot out.png [glass|bars|modify|modify-bars]` renders the editor offscreen with a
+`test-plugin --snapshot out.png [glass|bars|modify|modify-bars][-mpe]` renders the editor offscreen with a
 chord playing, for looking at the UI without a desktop session.
 
 ## Running
@@ -137,6 +140,26 @@ The plugin keeps the browser player's map, so the two are interchangeable on one
 | CC11 / aftertouch | finger load |
 | Pitch bend | ±40 ¢, limited by the spring force cap |
 | Program 0 / 1 | glass / bars |
+
+### MPE
+
+With the **MPE** switch on (play view, or ADVANCED › Performance), member channels carry
+per-note expression. The master channel, and any channel outside the zone, keep the map above.
+The switch also turns on, with the controller's zone layout, when an MPE Configuration Message
+(RPN 6 on channel 1 or 16) arrives. Without one, MPE uses the usual lower zone: master channel 1,
+members 2–16.
+
+| Per-note control | Glass | Bars |
+|---|---|---|
+| Pitch bend | bends that bowl through the coils' spring | bends that bar |
+| Pressure (channel or poly aftertouch) | finger load on that bowl: press harder, louder and grittier | — |
+| Slide (CC74) | spindle running: the finger glides with or against the glass (centre = still); spindle stopped: rub speed (centre = the finger-speed setting, bottom = a still finger, silent) | where the mallet lands (at note-on) |
+
+`MPE bend range` (default 48 semitones, the MPE standard) says what a full member-channel bend
+means, as the controller sends it. A physical spring cannot bend a bowl by semitones, so the
+result is clamped to `Pitch-bend range` (at most ±40 ¢): small finger movements give the whole
+physical bend. Expression sent before a note-on applies to that note. Two channels on the same
+note play one bowl or bar, which sounds at the first and is released at the last.
 
 ## Notes on the port
 

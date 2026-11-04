@@ -227,7 +227,7 @@ bool Synth::sounding(int midi) const { return envOf(midi) >= 0; }
 
 bool Synth::held(int midi) const {
     for (int i = 0; i < numVoices_; ++i)
-        if (voices_[i].kind != Voice::Kind::None && voices_[i].midi == midi && voices_[i].held) return true;
+        if (voices_[i].kind == kindFor(inst_) && voices_[i].midi == midi && voices_[i].held) return true;
     return false;
 }
 

@@ -13,7 +13,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # so the compiler must not reassociate or fuse floating-point operations.
 # Never add -ffast-math or /fp:fast to anything that links the engine.
 if(MSVC)
-  set(MAGNETIKA_FP_FLAGS /fp:precise /fp:contract-)
+  # Since VS 2022, /fp:precise does not contract (fuse multiply-adds) unless
+  # /fp:contract is also given; there is no option to switch it off explicitly.
+  set(MAGNETIKA_FP_FLAGS /fp:precise)
   set(MAGNETIKA_WARN /W4)
 else()
   set(MAGNETIKA_FP_FLAGS -ffp-contract=off -fno-fast-math)

@@ -27,6 +27,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
+    bool supportsMPE() const override { return true; }
 
     const juce::String getName() const override { return "Magnetika"; }
     bool acceptsMidi() const override { return true; }
@@ -92,7 +93,9 @@ private:
     // ---- MPE (audio thread)
     bool isMpeMember(int channel) const;
     bool handleRpn(int channel, int cc, int value);  // true if the CC was RPN plumbing
-    void handleMpeMember(int channel, const juce::MidiMessage& m);
+    bool handleMpeMember(int channel, const juce::MidiMessage& m);  // false: not per-note, use the global map
+    void releaseMemberNote(int channel, int midi);
+    void setZones(int lower, int upper);
     void applySlide(int midi, float slide, bool atNoteOn);
     void resetMpeNotes();
     void renderRange(juce::AudioBuffer<float>& buffer, int start, int end);
@@ -133,6 +136,11 @@ private:
     std::atomic<bool> releaseAllPending_{false}, allOffPending_{false};
     std::atomic<int> pendingProgram_{-1};  // instrument from a MIDI program change, not yet in the parameter
     std::atomic<int> pendingMpe_{-1};      // MPE on/off from a configuration message, not yet in the parameter
+    std::atomic<float> pendingMpeBendRange_{-1};  // from RPN 0 on a member channel, likewise
+    // The zone layout is not a parameter; it is saved with the state so a project
+    // reopens with the zones the controller configured (controllers do not resend it).
+    std::atomic<int> zonesShared_{-1};     // lower * 16 + upper, published by the audio thread
+    std::atomic<int> pendingZones_{-1};    // restored from a saved state, applied on the audio thread
     void timerCallback() override {
         syncProgramChange();
         syncMpe();
@@ -150,10 +158,12 @@ private:
     std::array<MpeChannel, 17> mpeCh_{};          // by MIDI channel 1..16
     std::array<unsigned char, 128> mpeHeld_{};    // member channels holding each note
     std::array<int, 17> rpnMsb_{}, rpnLsb_{};     // RPN selection per channel (127 = none)
-    int lowerMembers_ = 15, upperMembers_ = 0;
+    int lowerMembers_ = 0, upperMembers_ = 0;  // switching MPE on with no zones gives a lower zone of 15
+    float memberBendRange_ = 48;  // semitones of a full member bend (the parameter, or RPN 0)
+    float lastMpeBendRangeParam_ = -1;
     bool mpeActive_ = false;
     float lastMpeParam_ = -1;
-    std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr;
+    std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr;
 
     // seqlock: odd while the audio thread writes, even when the copy is consistent
     std::atomic<std::uint32_t> dispSeq_{0};

@@ -501,7 +501,7 @@ void testMpeSharedNoteAndAllOff() {
     playBlocks(p, 4);
     playBlocks(p, 4, {juce::MidiMessage::noteOn(5, 72, 0.8f)});
     voiceLevel(p, 72, &held);
-    CHECK(held, "a note after ALL OFF did not sound (stale MPE hold count)");
+    CHECK(held, "a note after ALL OFF did not sound");
     playBlocks(p, 4, {juce::MidiMessage::noteOff(5, 72)});
     voiceLevel(p, 72, &held);
     CHECK(!held, "the note after ALL OFF did not release");
@@ -553,6 +553,157 @@ void testMpeSlide() {
         return playBlocks(p, 40, {M::controllerEvent(2, 74, slide), M::noteOn(2, 69, 0.8f)});
     };
     CHECK(bar(0) != bar(127), "slide did not move the bars' strike position");
+}
+
+bool isHeld(MagnetikaProcessor& p, int midi, bool glass = true) {
+    const auto d = p.readDisplay();
+    for (int i = 0; i < d.count; ++i) {
+        const auto& v = d.voices[static_cast<size_t>(i)];
+        if (v.midi == midi && v.glass == glass && v.held) return true;
+    }
+    return false;
+}
+
+std::vector<juce::MidiMessage> mcm(int masterCh, int members) {
+    using M = juce::MidiMessage;
+    return {M::controllerEvent(masterCh, 101, 0), M::controllerEvent(masterCh, 100, 6), M::controllerEvent(masterCh, 6, members),
+            M::controllerEvent(masterCh, 101, 127), M::controllerEvent(masterCh, 100, 127)};
+}
+
+void testMpeNoteBookkeeping() {
+    using M = juce::MidiMessage;
+    {   // a repeated note-on on one channel is a re-strike, not a second holder
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 4, {M::noteOn(2, 72, 0.8f), M::noteOn(2, 72, 0.8f)});
+        playBlocks(p, 4, {M::noteOff(2, 72)});
+        CHECK(!isHeld(p, 72), "a doubled note-on left C5 held after its note-off");
+    }
+    {   // a stray note-off from a channel that does not own the note leaves it alone
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 4, {M::noteOn(3, 72, 0.8f)});
+        playBlocks(p, 4, {M::noteOff(2, 72)});
+        CHECK(isHeld(p, 72), "a note-off on another channel released channel 3's C5");
+        playBlocks(p, 4, {M::noteOff(3, 72)});
+        CHECK(!isHeld(p, 72), "channel 3's own note-off should release C5");
+    }
+    {   // a note begun before MPE was switched on still releases
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        p.prepareToPlay(SR, 256);
+        playBlocks(p, 4, {M::noteOn(2, 72, 0.8f)});
+        setParam(p, "mpe", 1.0f);
+        playBlocks(p, 4, {M::noteOff(2, 72)});
+        CHECK(!isHeld(p, 72), "a note held across the MPE switch stuck");
+    }
+    {   // and one held while the zone layout changes
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 4, {M::noteOn(5, 72, 0.8f)});
+        playBlocks(p, 1, mcm(1, 7));
+        playBlocks(p, 4, {M::noteOff(5, 72)});
+        CHECK(!isHeld(p, 72), "a note held across a zone change stuck");
+    }
+    {   // all-notes-off on a member channel releases that channel's note only
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 4, {M::noteOn(2, 72, 0.8f), M::noteOn(3, 76, 0.8f)});
+        playBlocks(p, 4, {M::allNotesOff(2)});
+        CHECK(!isHeld(p, 72) && isHeld(p, 76), "all-notes-off on channel 2 should release only its note");
+    }
+    {   // switching instrument mid-note: the new instrument's note sounds
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 4, {M::noteOn(2, 72, 0.8f)});
+        setParam(p, "instrument", 1.0f);
+        playBlocks(p, 4, {M::noteOn(3, 72, 0.8f)});
+        CHECK(isHeld(p, 72, false), "a bars note on a pitch the glass still held did not sound");
+    }
+}
+
+// Pressure on `pressCh` with C5 playing on `noteCh`: identical to no pressure at all when
+// pressCh is a member channel with no note, different when it is global (finger load).
+bool pressureIsGlobal(MagnetikaProcessor& p, int noteCh, int pressCh) {
+    using M = juce::MidiMessage;
+    juce::MemoryBlock st;
+    p.getStateInformation(st);
+    auto render = [&](bool press) {
+        MagnetikaProcessor q;
+        q.setStateInformation(st.getData(), static_cast<int>(st.getSize()));
+        q.setPlayConfigDetails(0, 2, SR, 256);
+        q.prepareToPlay(SR, 256);
+        std::vector<M> first;
+        if (press) first.push_back(pressure(pressCh, 0));
+        first.push_back(M::noteOn(noteCh, 72, 0.8f));
+        return playBlocks(q, 60, first);
+    };
+    return render(true) != render(false);
+}
+
+void testMpeZones() {
+    {   // "lower 15, upper 0" (what many controllers send) keeps channel 16 a member
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        p.prepareToPlay(SR, 256);
+        playBlocks(p, 1, mcm(1, 15));
+        playBlocks(p, 1, mcm(16, 0));
+        p.syncMpe();
+        CHECK(!pressureIsGlobal(p, 2, 16), "channel 16 dropped out of a 15-member lower zone after 'upper 0'");
+    }
+    {   // an upper zone only: channels 9..15 are members, channel 2 is not
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        p.prepareToPlay(SR, 256);
+        playBlocks(p, 1, mcm(16, 7));
+        p.syncMpe();
+        CHECK(pressureIsGlobal(p, 15, 2), "channel 2 acted as a member with only an upper zone configured");
+        CHECK(!pressureIsGlobal(p, 15, 14), "channel 14 should be a member of a 7-channel upper zone");
+        // pressureIsGlobal renders from the saved state: the zone layout survives it
+        // (an upper-only zone restored as the default lower zone would make channel 2 a member)
+    }
+}
+
+void testMpeBendRangeFromRpn() {
+    using M = juce::MidiMessage;
+    // RPN 0 = 1 semitone on a member channel: a quarter-wheel bend is then 25 c, as with
+    // the parameter at 1; at the default 48 it would be clamped to the 40 c spring limit
+    auto render = [](bool viaRpn, float rangeParam, float* paramAfter) {
+        MagnetikaProcessor p;
+        setParam(p, "mpeBendRange", rangeParam);
+        mpeProcessor(p);
+        std::vector<M> first;
+        if (viaRpn) {
+            first.push_back(M::controllerEvent(2, 101, 0));
+            first.push_back(M::controllerEvent(2, 100, 0));
+            first.push_back(M::controllerEvent(2, 6, 1));
+        }
+        first.push_back(M::pitchWheel(2, 8192 + 2048));
+        first.push_back(M::noteOn(2, 72, 0.8f));
+        auto out = playBlocks(p, 150, first);
+        p.syncMpe();
+        if (paramAfter) *paramAfter = p.state().getRawParameterValue("mpeBendRange")->load();
+        return out;
+    };
+    float after = 0;
+    const auto viaRpn = render(true, 48, &after);
+    CHECK(viaRpn == render(false, 1, nullptr), "RPN 0 = 1 semitone did not act as a 1-semitone member bend range");
+    CHECK(viaRpn != render(false, 48, nullptr), "the RPN 0 bend range had no effect");
+    CHECK(after == 1.0f, "the MPE bend range parameter did not follow RPN 0 (%g)", after);
+}
+
+void testMpeSlideFollowsTheEffectiveSpin() {
+    using M = juce::MidiMessage;
+    // spindle switched on but at 0 rev/s is a fixed bowl, as the engine treats it:
+    // centre slide rubs at the finger-speed setting (sounds), bottom is a still finger
+    auto glass = [](int slide) {
+        MagnetikaProcessor p;
+        setParam(p, "g_spin", 0.0f);
+        mpeProcessor(p);
+        playBlocks(p, 470, {M::controllerEvent(2, 74, slide), M::noteOn(2, 72, 0.8f)});
+        return voiceLevel(p, 72);
+    };
+    CHECK(glass(0) < glass(64) * 0.3f, "spin 0 with the spindle on: slide not read as rub speed (%.3g vs %.3g)", glass(0), glass(64));
 }
 
 void testPresetStoreRoundTrip() {
@@ -638,6 +789,10 @@ int main(int argc, char** argv) {
     testMpeSharedNoteAndAllOff();
     testMpeConfigurationMessage();
     testMpeSlide();
+    testMpeNoteBookkeeping();
+    testMpeZones();
+    testMpeBendRangeFromRpn();
+    testMpeSlideFollowsTheEffectiveSpin();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

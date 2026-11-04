@@ -29,19 +29,22 @@ MagnetikaProcessor::MagnetikaProcessor()
     mpeRaw_ = get(id::mpe);
     mpeBendRangeRaw_ = get(id::mpeBendRange);
     fingerSpeedRaw_ = get("g_fingerSpeed");
+    spinRaw_ = get("g_spin");
     rpnMsb_.fill(127);
     rpnLsb_.fill(127);
     startTimerHz(20);
 }
 
 void MagnetikaProcessor::syncMpe() {
-    const int on = pendingMpe_.exchange(-1);
-    if (on < 0) return;
-    if (auto* prm = apvts_.getParameter(id::mpe)) {
-        prm->beginChangeGesture();
-        prm->setValueNotifyingHost(on ? 1.0f : 0.0f);
-        prm->endChangeGesture();
-    }
+    auto write = [this](const char* pid, float value) {
+        if (auto* prm = apvts_.getParameter(pid)) {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost(prm->convertTo0to1(value));
+            prm->endChangeGesture();
+        }
+    };
+    if (const int on = pendingMpe_.exchange(-1); on >= 0) write(id::mpe, static_cast<float>(on));
+    if (const float st = pendingMpeBendRange_.exchange(-1.0f); st >= 0) write(id::mpeBendRange, st);
 }
 
 void MagnetikaProcessor::syncProgramChange() {
@@ -124,14 +127,18 @@ void MagnetikaProcessor::applyParameters(bool force) {
         if (gains[i] != lastGains_[i]) dirty = true;
         lastGains_[i] = gains[i];
     }
+    if (const int z = pendingZones_.exchange(-1); z >= 0) setZones(z / 16, z % 16);  // from a saved project
     const float mpeParam = mpeRaw_->load();
     if (force || mpeParam != lastMpeParam_) {
         const bool on = mpeParam > 0.5f;
         if (on != mpeActive_) resetMpeNotes();
-        if (on && !mpeActive_ && lowerMembers_ == 0 && upperMembers_ == 0) lowerMembers_ = 15;
+        if (on && lowerMembers_ == 0 && upperMembers_ == 0) setZones(15, 0);  // the usual lower zone
         mpeActive_ = on;
     }
     lastMpeParam_ = mpeParam;
+    const float memberRange = mpeBendRangeRaw_->load();
+    if (force || memberRange != lastMpeBendRangeParam_) memberBendRange_ = memberRange;
+    lastMpeBendRangeParam_ = memberRange;
 
     // the bend range scales the wheel, so a range change moves the bend
     const float bend = bendWheel_ * p_.bendRange->load();
@@ -239,10 +246,7 @@ void MagnetikaProcessor::handleMidi(const juce::MidiMessage& m) {
     ++midiCount_;
     const int ch = m.getChannel();
     if (m.isController() && handleRpn(ch, m.getControllerNumber(), m.getControllerValue())) return;
-    if (isMpeMember(ch) && !m.isAllNotesOff() && !m.isAllSoundOff()) {
-        handleMpeMember(ch, m);
-        return;
-    }
+    if (isMpeMember(ch) && handleMpeMember(ch, m)) return;
     if (m.isNoteOn()) {
         synth_->noteOn(m.getNoteNumber(), m.getFloatVelocity());
         return;
@@ -302,82 +306,130 @@ bool MagnetikaProcessor::isMpeMember(int ch) const {
 }
 
 // Registered parameters, only as far as MPE needs: RPN 6 on a zone's master
-// channel is the MPE Configuration Message (data = member count, 0 = zone off).
+// channel is the MPE Configuration Message (data = member count, 0 = zone off);
+// RPN 0 on a member channel sets the member pitch-bend range.
 bool MagnetikaProcessor::handleRpn(int ch, int cc, int value) {
     if (ch < 1 || ch > 16) return false;
     const auto c = static_cast<size_t>(ch);
     if (cc == 101) { rpnMsb_[c] = value; return true; }
     if (cc == 100) { rpnLsb_[c] = value; return true; }
+    if (cc == 99 || cc == 98) {  // an NRPN deselects any RPN, so its data cannot be misread as one
+        rpnMsb_[c] = rpnLsb_[c] = 127;
+        return true;
+    }
     if (cc == 38) return true;  // data entry LSB: nothing here needs it
     if (cc != 6) return false;
     if (rpnMsb_[c] == 0 && rpnLsb_[c] == 6 && (ch == 1 || ch == 16)) {
         const int n = juce::jlimit(0, 15, value);
+        int lower = lowerMembers_, upper = upperMembers_;
+        // zones never overlap: a zone that takes channels shrinks the other one
+        // (a zone switched off takes none, so "lower 15, upper 0" keeps all 15)
         if (ch == 1) {
-            lowerMembers_ = n;
-            upperMembers_ = std::min(upperMembers_, 14 - n);  // zones never overlap
+            lower = n;
+            if (n > 0) upper = std::min(upper, 14 - n);
         } else {
-            upperMembers_ = n;
-            lowerMembers_ = std::min(lowerMembers_, 14 - n);
+            upper = n;
+            if (n > 0) lower = std::min(lower, 14 - n);
         }
-        lowerMembers_ = std::max(0, lowerMembers_);
-        upperMembers_ = std::max(0, upperMembers_);
+        setZones(std::max(0, lower), std::max(0, upper));
         const bool on = lowerMembers_ > 0 || upperMembers_ > 0;
         if (on != mpeActive_) resetMpeNotes();
         mpeActive_ = on;
         pendingMpe_.store(on ? 1 : 0);  // the MPE switch follows on the message thread
+    } else if (rpnMsb_[c] == 0 && rpnLsb_[c] == 0 && isMpeMember(ch)) {
+        memberBendRange_ = static_cast<float>(juce::jlimit(1, 96, value));
+        pendingMpeBendRange_.store(memberBendRange_);  // the parameter follows
     }
-    return true;  // other RPNs (bend sensitivity, tuning) are not used
+    return true;  // other RPNs (master bend range, tuning) are not used
+}
+
+void MagnetikaProcessor::setZones(int lower, int upper) {
+    if (lower != lowerMembers_ || upper != upperMembers_) resetMpeNotes();  // channels changed meaning
+    lowerMembers_ = lower;
+    upperMembers_ = upper;
+    zonesShared_.store(lower * 16 + upper);
 }
 
 // Per-note expression on a member channel. A note shared by two channels is one
-// bowl or bar (two fingers on one bowl): it sounds at the first and is released
-// at the last; expression comes from whichever channel spoke last.
-void MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
+// bowl (two fingers on one bowl): it sounds at the first and is released at the
+// last; expression comes from whichever channel spoke last. On the bars every
+// strike sounds, and the damper returns when the last channel lets go.
+bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
     auto& c = mpeCh_[static_cast<size_t>(ch)];
     const bool glass = perf_.instrument == 0;
     auto bendCents = [this](float bend) {
         const float range = p_.bendRange->load();  // what the coils' spring may do, cents
-        return juce::jlimit(-range, range, bend * mpeBendRangeRaw_->load() * 100.0f);
+        return juce::jlimit(-range, range, bend * memberBendRange_ * 100.0f);
     };
     if (m.isNoteOn()) {
         const int midi = m.getNoteNumber();
-        if (c.note >= 0 && c.note != midi && mpeHeld_[static_cast<size_t>(c.note)] > 0 &&
-            --mpeHeld_[static_cast<size_t>(c.note)] == 0)
-            synth_->noteOff(c.note);  // a channel plays one note at a time
+        if (c.note >= 0 && c.note != midi) releaseMemberNote(ch, c.note);  // one note per channel
+        const bool again = c.note == midi;  // a repeated note-on is a re-strike, not another holder
         c.note = midi;
         auto& held = mpeHeld_[static_cast<size_t>(midi)];
-        if (held < 255) ++held;
-        if (!synth_->held(midi)) synth_->noteOn(midi, m.getFloatVelocity());
-        // the controller sends a note's initial expression before its note-on
-        synth_->setNoteBend(midi, bendCents(c.bend));
-        if (c.pressure >= 0) synth_->setNoteTouch(midi, 0.2 + 1.8 * c.pressure);
-        if (c.slide >= 0) applySlide(midi, c.slide, true);
-        return;
+        if (!again && held < 255) ++held;
+        if (!glass || !synth_->held(midi)) {
+            synth_->noteOn(midi, m.getFloatVelocity());
+            // the controller sends a note's initial expression before its note-on
+            synth_->setNoteBend(midi, bendCents(c.bend));
+            if (c.pressure >= 0) synth_->setNoteTouch(midi, 0.2 + 1.8 * c.pressure);
+            if (c.slide >= 0) applySlide(midi, c.slide, true);
+        }
+        // joining a bowl another channel holds: its live expression is left alone
+        return true;
     }
     if (m.isNoteOff()) {
-        const int midi = m.getNoteNumber();
-        auto& held = mpeHeld_[static_cast<size_t>(midi)];
-        if (held > 0 && --held == 0) synth_->noteOff(midi);
-        if (c.note == midi) c.note = -1;
-        return;
+        releaseMemberNote(ch, m.getNoteNumber());
+        return true;
     }
     if (m.isPitchWheel()) {
         c.bend = static_cast<float>(m.getPitchWheelValue() - 8192) / 8192.0f;
         if (c.note >= 0) synth_->setNoteBend(c.note, bendCents(c.bend));
-        return;
+        return true;
     }
     if (m.isChannelPressure() || m.isAftertouch()) {
         const int v = m.isChannelPressure() ? m.getChannelPressureValue() : m.getAfterTouchValue();
         c.pressure = static_cast<float>(v) / 127.0f;
         if (c.note >= 0 && glass) synth_->setNoteTouch(c.note, 0.2 + 1.8 * c.pressure);
-        return;
+        return true;
     }
-    if (m.isController() && m.getControllerNumber() == 74) {
-        c.slide = static_cast<float>(m.getControllerValue()) / 127.0f;
-        if (c.note >= 0) applySlide(c.note, c.slide, false);
-        return;
+    if (m.isController()) {
+        switch (m.getControllerNumber()) {
+            case 74:
+                c.slide = static_cast<float>(m.getControllerValue()) / 127.0f;
+                if (c.note >= 0) applySlide(c.note, c.slide, false);
+                return true;
+            case 120:  // all sound off / all notes off on a member channel: this channel only
+            case 123:
+                if (c.note >= 0) releaseMemberNote(ch, c.note);
+                return true;
+            case 121:  // reset controllers: this channel's expression back to neutral
+                c.bend = 0;
+                c.pressure = c.slide = -1;
+                if (c.note >= 0) {
+                    synth_->setNoteBend(c.note, 0);
+                    if (glass) synth_->setNoteTouch(c.note, 1);
+                }
+                return true;
+            default: return false;  // a pedal or other controller sent on a member channel: global
+        }
     }
-    // anything else on a member channel (other CCs, program change) is not per-note: ignored
+    return m.isProgramChange();  // a member channel cannot change the instrument
+}
+
+// A member channel lets go of `midi`. A note no channel counted (begun before MPE
+// switched on or the zones changed) is released outright, so nothing can stick;
+// a counted note another channel owns is left alone (a stray note-off).
+void MagnetikaProcessor::releaseMemberNote(int ch, int midi) {
+    auto& c = mpeCh_[static_cast<size_t>(ch)];
+    auto& held = mpeHeld_[static_cast<size_t>(midi)];
+    if (c.note == midi) {
+        c.note = -1;
+        if (held > 0) --held;
+        if (held == 0) synth_->noteOff(midi);
+    } else if (held == 0) {
+        synth_->noteOff(midi);
+    }
 }
 
 // Slide (CC74): on the glass, how the finger travels along the rim; on the
@@ -387,7 +439,8 @@ void MagnetikaProcessor::applySlide(int midi, float slide, bool atNoteOn) {
         if (atNoteOn) synth_->setNoteStrikePos(midi, slide);
         return;
     }
-    if (spindleOnRaw_->load() > 0.5f) {
+    // the same test the engine makes: a turning spindle, or a fixed bowl (spin <= 0.05)
+    if (spindleOnRaw_->load() > 0.5f && spinRaw_->load() > 0.05f) {
         // spindle running: the finger glides with or against the glass, centre = still
         const float x = (slide - 0.5f) * 2.0f;
         synth_->setNoteFingerSpeed(midi, std::abs(x) < 0.02f ? 0.0 : 8.0 * x);
@@ -444,12 +497,18 @@ void MagnetikaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 }
 
 void MagnetikaProcessor::getStateInformation(juce::MemoryBlock& destData) {
-    if (auto xml = apvts_.copyState().createXml()) copyXmlToBinary(*xml, destData);
+    auto state = apvts_.copyState();
+    if (const int z = zonesShared_.load(); z >= 0) state.setProperty("mpeZones", z, nullptr);
+    if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
 void MagnetikaProcessor::setStateInformation(const void* data, int sizeInBytes) {
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
-        if (xml->hasTagName(apvts_.state.getType())) apvts_.replaceState(juce::ValueTree::fromXml(*xml));
+        if (xml->hasTagName(apvts_.state.getType())) {
+            auto state = juce::ValueTree::fromXml(*xml);
+            if (state.hasProperty("mpeZones")) pendingZones_.store(juce::jlimit(0, 255, static_cast<int>(state["mpeZones"])));
+            apvts_.replaceState(state);
+        }
 }
 
 juce::AudioProcessorEditor* MagnetikaProcessor::createEditor() { return new MagnetikaEditor(*this); }
