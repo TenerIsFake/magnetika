@@ -138,8 +138,8 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
     nextBtn_.setTitle("Next preset");
     prevBtn_.onClick = [this] { stepPreset(-1); };
     nextBtn_.onClick = [this] { stepPreset(+1); };
-    saveBtn_.setEnabled(false);
-    saveBtn_.setTooltip("Saving user presets arrives with the preset browser");
+    saveBtn_.setTooltip("Save the whole setup as a user preset (Documents/Magnetika/Presets)");
+    saveBtn_.onClick = [this] { savePreset(); };
 
     rotation_.setTitle("Pattern rotation rate");
     vibrato_.setTitle("Vibrato depth");
@@ -160,6 +160,16 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
         strip_.clearLatches();
     };
     addAndMakeVisible(allOffBtn_);
+
+    // master level for the instrument shown (on top of the instrument views)
+    for (auto* s : {&levelGlass_, &levelBars_}) {
+        s->setRotaryParameters(juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+        s->setTitle("Level");
+        addChildComponent(s);
+    }
+    levelGlassAtt_ = std::make_unique<SA>(st, "g_master", levelGlass_);
+    levelBarsAtt_ = std::make_unique<SA>(st, "b_master", levelBars_);
+    levelGlass_.setVisible(true);
     startTimerHz(15);
 }
 
@@ -177,11 +187,45 @@ void PlayPage::setParam(const char* pid, double v) {
 
 void PlayPage::setInstrument(int i) { setParam(id::instrument, i); }
 
+// Steps through the factory entries (materials or mallet setups), then the user presets.
 void PlayPage::stepPreset(int delta) {
     auto& st = proc_.state();
+    const bool glass = instrument() == 0;
+    const int factory = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
+    const auto users = store_.names();
+    const int total = factory + users.size();
+    const int current = userSel_ >= 0 ? factory + userSel_
+                                      : static_cast<int>(st.state.getProperty(glass ? materialProp : barPresetProp, glass ? 3 : 0));
+    const int next = ((current + delta) % total + total) % total;
+    if (next >= factory) {
+        userSel_ = next - factory;
+        store_.load(users[userSel_], st);
+        glass_.setMaterial(static_cast<int>(st.state.getProperty(materialProp, 3)));
+    } else {
+        userSel_ = -1;
+        applyFactory(next);
+    }
+    repaint();
+}
+
+void PlayPage::savePreset() {
+    saveDialog_ = std::make_unique<juce::AlertWindow>("Save preset", "Name this setup. It is saved with every setting.", juce::MessageBoxIconType::NoIcon, this);
+    saveDialog_->addTextEditor("name", "My setup", "Preset name");
+    saveDialog_->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    saveDialog_->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    saveDialog_->enterModalState(true, juce::ModalCallbackFunction::create([this](int result) {
+        if (result == 1 && saveDialog_ != nullptr) {
+            const auto name = juce::File::createLegalFileName(saveDialog_->getTextEditorContents("name").trim());
+            if (store_.save(name, proc_.state())) userSel_ = store_.names().indexOf(name);
+        }
+        saveDialog_.reset();
+        repaint();
+    }), false);
+}
+
+void PlayPage::applyFactory(int idx) {
+    auto& st = proc_.state();
     if (instrument() == 0) {
-        const int n = static_cast<int>(materials().size());
-        const int idx = (static_cast<int>(st.state.getProperty(materialProp, 3)) + delta + n) % n;
         st.state.setProperty(materialProp, idx, nullptr);
         const auto& m = materials()[static_cast<size_t>(idx)];
         setParam("g_Q2", m.Q2);
@@ -189,8 +233,6 @@ void PlayPage::stepPreset(int delta) {
         setParam("g_split", m.split);
         glass_.setMaterial(idx);
     } else {
-        const int n = static_cast<int>(barPresets().size());
-        const int idx = (static_cast<int>(st.state.getProperty(barPresetProp, 0)) + delta + n) % n;
         st.state.setProperty(barPresetProp, idx, nullptr);
         const auto& b = barPresets()[static_cast<size_t>(idx)];
         setParam("b_strikeF", b.strikeF);
@@ -222,19 +264,54 @@ void PlayPage::paint(juce::Graphics& g) {
     g.setColour(theme::amberText);
     g.drawText(juce::String(vibrato_.getValue(), 1) + juce::String::fromUTF8(" \xc2\xa2"), vibText_, juce::Justification::centredRight);
 
-    // preset readout
-    const int idx = glass ? static_cast<int>(proc_.state().state.getProperty(materialProp, 3))
-                          : static_cast<int>(proc_.state().state.getProperty(barPresetProp, 0));
-    const int count = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
-    const juce::String name = glass ? materials()[static_cast<size_t>(idx)].name : barPresets()[static_cast<size_t>(idx)].name;
+    // preset readout: a factory entry, or a user preset after them
+    const auto users = store_.names();
+    const int factory = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
+    const bool user = userSel_ >= 0 && userSel_ < users.size();
+    const int idx = user ? factory + userSel_
+                         : glass ? static_cast<int>(proc_.state().state.getProperty(materialProp, 3))
+                                 : static_cast<int>(proc_.state().state.getProperty(barPresetProp, 0));
+    const juce::String name = user ? users[userSel_]
+                                   : glass ? juce::String(materials()[static_cast<size_t>(idx)].name)
+                                           : juce::String(barPresets()[static_cast<size_t>(idx)].name);
     auto pr = presetText_;
     g.setColour(theme::inkFaint);
     g.setFont(theme::sans(10.5f).withExtraKerningFactor(0.16f));
-    g.drawText(juce::String::fromUTF8(glass ? "MATERIAL  \xc2\xb7  " : "MALLET  \xc2\xb7  ") + juce::String(idx + 1) + " / " + juce::String(count),
+    g.drawText(juce::String::fromUTF8(user ? "USER PRESET  \xc2\xb7  " : glass ? "MATERIAL  \xc2\xb7  " : "MALLET  \xc2\xb7  ") +
+                   juce::String(idx + 1) + " / " + juce::String(factory + users.size()),
                pr.removeFromTop(pr.getHeight() * 0.45f), juce::Justification::bottomLeft);
     g.setColour(theme::amberText);
     g.setFont(theme::mono(13.0f));
     g.drawText(name, pr, juce::Justification::topLeft);
+
+    // status cluster: level knob (a child), output meters, limiter and MIDI lamps, voices
+    theme::drawWell(g, statusWell_);
+    g.setColour(theme::inkFaint);
+    g.setFont(theme::sans(10.5f).withExtraKerningFactor(0.14f));
+    g.drawText("LEVEL", juce::Rectangle<float>(statusWell_.getX() + 6, statusWell_.getY() + 60, 56, 12), juce::Justification::centred);
+    for (int ch = 0; ch < 2; ++ch) {
+        auto bar = juce::Rectangle<float>(statusWell_.getX() + 74 + 14.0f * static_cast<float>(ch), statusWell_.getY() + 8, 8, 62);
+        g.setColour(juce::Colour(0xff0b0806));
+        g.fillRoundedRectangle(bar, 3);
+        const float pk = ch == 0 ? meterL_ : meterR_;
+        const float frac = pk <= 1e-5f ? 0.0f : juce::jlimit(0.0f, 1.0f, (20.0f * std::log10(pk) + 48.0f) / 48.0f);
+        auto fill = bar.withTrimmedTop(bar.getHeight() * (1.0f - frac));
+        g.setGradientFill(juce::ColourGradient(theme::amberText, 0, bar.getY(), juce::Colour(0xff9a5f14), 0, bar.getBottom(), false));
+        g.fillRoundedRectangle(fill, 3);
+        g.setColour(theme::inkFaint);
+        g.drawText(ch == 0 ? "L" : "R", juce::Rectangle<float>(bar.getX() - 2, bar.getBottom() + 1, 12, 12), juce::Justification::centred);
+    }
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    auto lampRow = statusWell_.withTrimmedTop(84).withHeight(14).translated(8, 0);
+    theme::drawLed(g, lampRow.removeFromLeft(10).withSizeKeepingCentre(8, 8), d_.limiting);
+    g.setColour(theme::inkFaint);
+    g.drawText("LIMIT", lampRow.removeFromLeft(44).translated(4, 0), juce::Justification::centredLeft);
+    theme::drawLed(g, lampRow.removeFromLeft(10).withSizeKeepingCentre(8, 8), now < midiLampUntil_);
+    g.setColour(theme::inkFaint);
+    g.drawText("MIDI", lampRow.removeFromLeft(40).translated(4, 0), juce::Justification::centredLeft);
+    g.setColour(theme::amberText);
+    g.setFont(theme::mono(11.0f));
+    g.drawText("VOICES " + juce::String(d_.count) + "/16", statusWell_.withTrimmedTop(100).withHeight(14), juce::Justification::centred);
 
     g.setFont(theme::sans(12.5f, true).withExtraKerningFactor(0.14f));
     g.setColour(glass ? theme::buttonText : theme::buttonText.withAlpha(0.35f));
@@ -275,10 +352,27 @@ void PlayPage::resized() {
     bars_.setBounds(0, 106, 1200, 624);
     strip_.setBounds(20, 736, 1060, 52);
     allOffBtn_.setBounds(1092, 740, 88, 44);
+
+    statusWell_ = {1068, 116, 112, 118};
+    levelGlass_.setBounds(1074, 120, 56, 56);
+    levelBars_.setBounds(1074, 120, 56, 56);
+    levelGlass_.toFront(false);
+    levelBars_.toFront(false);
 }
 
 void PlayPage::timerCallback() {
     const auto d = proc_.readDisplay();
+    d_ = d;
+    // meters: fast attack, slow release; MIDI lamp: 150 ms per burst of messages
+    meterL_ = std::max(d.peakL, meterL_ * 0.8f);
+    meterR_ = std::max(d.peakR, meterR_ * 0.8f);
+    if (d.midiCount != lastMidiCount_) {
+        lastMidiCount_ = d.midiCount;
+        midiLampUntil_ = juce::Time::getMillisecondCounterHiRes() + 150.0;
+    }
+    levelGlass_.setVisible(instrument() == 0);
+    levelBars_.setVisible(instrument() != 0);
+    repaint(statusWell_.toNearestInt());
     // lamps follow the live pedal state, so a MIDI sustain pedal lights SUSTAIN too
     sustainBtn_.getProperties().set("mgLamp", d.sustain);
     brakeBtn_.getProperties().set("mgLamp", d.brake);

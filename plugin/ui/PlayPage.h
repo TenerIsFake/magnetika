@@ -13,6 +13,7 @@
 #include "../PluginProcessor.h"
 #include "BarsView.h"
 #include "GlassView.h"
+#include "PresetStore.h"
 
 namespace magnetika::plugin {
 
@@ -55,6 +56,8 @@ public:
 private:
     void timerCallback() override;
     void stepPreset(int delta);
+    void savePreset();
+    void applyFactory(int idx);
     void setInstrument(int i);
     int instrument() const;
     void setParam(const char* pid, double v);
@@ -74,13 +77,26 @@ private:
     juce::Slider damper_{juce::Slider::LinearHorizontal, juce::Slider::NoTextBox};
     std::unique_ptr<SA> damperAtt_;
 
+    // status cluster: master level for the instrument shown, output meters, lamps
+    juce::Slider levelGlass_{juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox};
+    juce::Slider levelBars_{juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox};
+    std::unique_ptr<SA> levelGlassAtt_, levelBarsAtt_;
+    MagnetikaProcessor::Display d_;
+    std::uint32_t lastMidiCount_ = 0;
+    double midiLampUntil_ = 0;
+    float meterL_ = 0, meterR_ = 0;
+
+    PresetStore store_;
+    int userSel_ = -1;  // index into store_.names() when a user preset is selected, else -1
+    std::unique_ptr<juce::AlertWindow> saveDialog_;
+
     GlassView glass_;
     BarsView bars_;
     NoteStrip strip_;
     juce::TextButton allOffBtn_{"ALL OFF"};
 
     juce::Rectangle<float> nameplate_, speedWell_, presetWell_, rotWell_, vibWell_, speedText_, presetText_, rotText_, vibText_,
-        damperText_;
+        damperText_, statusWell_;
 };
 
 } // namespace magnetika::plugin

@@ -316,6 +316,26 @@ void testBarsStrikeAndRoll() {
     CHECK(held.empty(), "lifting the mallet should release every bar (%zu still held)", held.size());
 }
 
+void testPresetStoreRoundTrip() {
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("magnetika-preset-test");
+    dir.deleteRecursively();
+    magnetika::plugin::PresetStore store(dir);
+    MagnetikaProcessor p;
+    setParam(p, "g_Q2", 9000.0f);
+    setParam(p, "instrument", 1.0f);
+    CHECK(store.save("Warm: bars / 9k", p.state()), "saving a preset failed");
+    setParam(p, "g_Q2", 1500.0f);
+    setParam(p, "instrument", 0.0f);
+    const auto names = store.names();
+    CHECK(names.size() == 1, "expected one saved preset, found %d", names.size());
+    CHECK(names.size() == 1 && store.load(names[0], p.state()), "loading the saved preset failed");
+    auto val = [&](const char* pid) { return p.state().getRawParameterValue(pid)->load(); };
+    CHECK(std::fabs(val("g_Q2") - 9000.0f) < 1.0f, "g_Q2 not restored by the preset: %f", val("g_Q2"));
+    CHECK(val("instrument") == 1.0f, "instrument not restored by the preset");
+    CHECK(!store.load("no such preset", p.state()), "loading a missing preset must fail");
+    dir.deleteRecursively();
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
@@ -370,6 +390,7 @@ int main(int argc, char** argv) {
     testSpindleOffStillFingerFades();
     testGlassTouchAndGlissando();
     testBarsStrikeAndRoll();
+    testPresetStoreRoundTrip();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;
