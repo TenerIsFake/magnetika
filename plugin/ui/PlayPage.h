@@ -11,6 +11,7 @@
 #include <set>
 
 #include "../PluginProcessor.h"
+#include "BarsView.h"
 #include "GlassView.h"
 
 namespace magnetika::plugin {
@@ -47,15 +48,16 @@ class PlayPage : public juce::Component, private juce::Timer {
 public:
     PlayPage(MagnetikaProcessor& p, std::function<void()> onModify);
     ~PlayPage() override;
-    void poll() { glass_.poll(); timerCallback(); }  // for offscreen snapshots
+    void poll() { glass_.poll(); bars_.poll(); timerCallback(); }  // for offscreen snapshots
     void paint(juce::Graphics&) override;
     void resized() override;
 
 private:
     void timerCallback() override;
-    void stepMaterial(int delta);
+    void stepPreset(int delta);
     void setInstrument(int i);
     int instrument() const;
+    void setParam(const char* pid, double v);
 
     MagnetikaProcessor& proc_;
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -69,11 +71,16 @@ private:
     std::unique_ptr<BA> sustainAtt_, brakeAtt_, spindleAtt_;
     std::unique_ptr<SA> speedAtt_, rotAtt_, vibAtt_;
 
+    juce::Slider damper_{juce::Slider::LinearHorizontal, juce::Slider::NoTextBox};
+    std::unique_ptr<SA> damperAtt_;
+
     GlassView glass_;
+    BarsView bars_;
     NoteStrip strip_;
     juce::TextButton allOffBtn_{"ALL OFF"};
 
-    juce::Rectangle<float> nameplate_, speedWell_, presetWell_, rotWell_, vibWell_, speedText_, presetText_, rotText_, vibText_;
+    juce::Rectangle<float> nameplate_, speedWell_, presetWell_, rotWell_, vibWell_, speedText_, presetText_, rotText_, vibText_,
+        damperText_;
 };
 
 } // namespace magnetika::plugin

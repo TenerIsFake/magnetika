@@ -88,7 +88,27 @@ void NoteStrip::clearLatches() { latched_.clear(); repaint(); }
 
 // ------------------------------------------------------------------ PlayPage
 
-PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify) : proc_(p), glass_(p), strip_(p) {
+namespace {
+const juce::Identifier barPresetProp{"barPreset"};
+// Mallet setups for the bars: strike force (N), contact time (ms), damper tail (s).
+struct BarPreset {
+    const char* name;
+    double strikeF, contact, damper;
+};
+const std::vector<BarPreset>& barPresets() {
+    static const std::vector<BarPreset> p = {
+        {"Medium mallet", 25, 2.0, 2.5},
+        {"Soft mallet, long tail", 18, 4.5, 5.0},
+        {"Hard mallet, bright", 45, 0.8, 2.0},
+        {"Felt, coil-bowed feel", 8, 6.0, 6.0},
+        {"Brake-short staccato", 30, 1.5, 0.4},
+    };
+    return p;
+}
+} // namespace
+
+PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
+    : proc_(p), glass_(p), bars_(p), strip_(p) {
     auto& st = proc_.state();
     for (auto* b : {&glassBtn_, &barsBtn_}) {
         b->getProperties().set(theme::segmentProperty, true);
@@ -107,14 +127,17 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify) : proc
     addAndMakeVisible(speed_);
     speedAtt_ = std::make_unique<SA>(st, "g_spin", speed_);
     speed_.setTitle("Spindle speed");
+    addChildComponent(damper_);
+    damperAtt_ = std::make_unique<SA>(st, "b_damper", damper_);
+    damper_.setTitle("Bar damper tail");
     modifyBtn_.onClick = std::move(onModify);
     addAndMakeVisible(modifyBtn_);
 
     for (auto* b : {&prevBtn_, &nextBtn_, &saveBtn_}) addAndMakeVisible(b);
-    prevBtn_.setTitle("Previous material");
-    nextBtn_.setTitle("Next material");
-    prevBtn_.onClick = [this] { stepMaterial(-1); };
-    nextBtn_.onClick = [this] { stepMaterial(+1); };
+    prevBtn_.setTitle("Previous preset");
+    nextBtn_.setTitle("Next preset");
+    prevBtn_.onClick = [this] { stepPreset(-1); };
+    nextBtn_.onClick = [this] { stepPreset(+1); };
     saveBtn_.setEnabled(false);
     saveBtn_.setTooltip("Saving user presets arrives with the preset browser");
 
@@ -126,10 +149,11 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify) : proc
     vibAtt_ = std::make_unique<SA>(st, id::vibDepth, vibrato_);
 
     addAndMakeVisible(glass_);
+    addChildComponent(bars_);
     glass_.setMaterial(static_cast<int>(st.state.getProperty(materialProp, 3)));
-    strip_.levelOf = [this](int m) { return glass_.levelOf(m); };
-    strip_.below = [this] { return glass_.outsideBelow(); };
-    strip_.above = [this] { return glass_.outsideAbove(); };
+    strip_.levelOf = [this](int m) { return instrument() == 0 ? glass_.levelOf(m) : bars_.levelOf(m); };
+    strip_.below = [this] { return instrument() == 0 ? glass_.outsideBelow() : bars_.outsideBelow(); };
+    strip_.above = [this] { return instrument() == 0 ? glass_.outsideAbove() : bars_.outsideAbove(); };
     addAndMakeVisible(strip_);
     allOffBtn_.onClick = [this] {
         proc_.pushUiEvent({MagnetikaProcessor::UiEvent::AllOff, 0, 0});
@@ -143,56 +167,81 @@ PlayPage::~PlayPage() { stopTimer(); }
 
 int PlayPage::instrument() const { return static_cast<int>(proc_.state().getRawParameterValue(id::instrument)->load()); }
 
-void PlayPage::setInstrument(int i) {
-    if (auto* prm = proc_.state().getParameter(id::instrument)) {
+void PlayPage::setParam(const char* pid, double v) {
+    if (auto* prm = proc_.state().getParameter(pid)) {
         prm->beginChangeGesture();
-        prm->setValueNotifyingHost(prm->convertTo0to1(static_cast<float>(i)));
+        prm->setValueNotifyingHost(prm->convertTo0to1(static_cast<float>(v)));
         prm->endChangeGesture();
     }
 }
 
-void PlayPage::stepMaterial(int delta) {
+void PlayPage::setInstrument(int i) { setParam(id::instrument, i); }
+
+void PlayPage::stepPreset(int delta) {
     auto& st = proc_.state();
-    const int n = static_cast<int>(materials().size());
-    const int idx = (static_cast<int>(st.state.getProperty(materialProp, 3)) + delta + n) % n;
-    st.state.setProperty(materialProp, idx, nullptr);
-    const auto& m = materials()[static_cast<size_t>(idx)];
-    for (auto [pid, v] : {std::pair<const char*, double>{"g_Q2", m.Q2}, {"g_Q3", m.Q3}, {"g_split", m.split}}) {
-        if (auto* prm = st.getParameter(pid)) {
-            prm->beginChangeGesture();
-            prm->setValueNotifyingHost(prm->convertTo0to1(static_cast<float>(v)));
-            prm->endChangeGesture();
-        }
+    if (instrument() == 0) {
+        const int n = static_cast<int>(materials().size());
+        const int idx = (static_cast<int>(st.state.getProperty(materialProp, 3)) + delta + n) % n;
+        st.state.setProperty(materialProp, idx, nullptr);
+        const auto& m = materials()[static_cast<size_t>(idx)];
+        setParam("g_Q2", m.Q2);
+        setParam("g_Q3", m.Q3);
+        setParam("g_split", m.split);
+        glass_.setMaterial(idx);
+    } else {
+        const int n = static_cast<int>(barPresets().size());
+        const int idx = (static_cast<int>(st.state.getProperty(barPresetProp, 0)) + delta + n) % n;
+        st.state.setProperty(barPresetProp, idx, nullptr);
+        const auto& b = barPresets()[static_cast<size_t>(idx)];
+        setParam("b_strikeF", b.strikeF);
+        setParam("b_contact", b.contact);
+        setParam("b_damper", b.damper);
     }
-    glass_.setMaterial(idx);
     repaint();
 }
 
 void PlayPage::paint(juce::Graphics& g) {
+    const bool glass = instrument() == 0;
     theme::drawBackdrop(g, getLocalBounds().toFloat());
     theme::drawNameplate(g, nameplate_);
     for (auto w : {speedWell_, presetWell_, rotWell_, vibWell_}) theme::drawWell(g, w);
-    g.setColour(theme::amberText);
     g.setFont(theme::mono(12.5f));
-    g.drawText(juce::String(speed_.getValue(), 2) + " rev/s", speedText_, juce::Justification::centredLeft);
+    g.setColour(theme::amberText);
+    if (glass) g.drawText(juce::String(speed_.getValue(), 2) + " rev/s", speedText_, juce::Justification::centredLeft);
+    else g.drawText(juce::String(damper_.getValue(), 1) + " s", damperText_, juce::Justification::centredLeft);
     const double rot = rotation_.getValue();
-    g.drawText((rot > 0 ? "+" : "") + juce::String(rot, 2) + " rev/s", rotText_, juce::Justification::centredRight);
+    if (glass) {
+        g.setColour(theme::amberText);
+        g.drawText((rot > 0 ? "+" : "") + juce::String(rot, 2) + " rev/s", rotText_, juce::Justification::centredRight);
+    } else {
+        g.setColour(theme::inkFaint);
+        g.setFont(theme::sans(11.5f));
+        g.drawText("glass only", rotText_, juce::Justification::centredRight);
+        g.setFont(theme::mono(12.5f));
+    }
+    g.setColour(theme::amberText);
     g.drawText(juce::String(vibrato_.getValue(), 1) + juce::String::fromUTF8(" \xc2\xa2"), vibText_, juce::Justification::centredRight);
+
     // preset readout
-    const int idx = static_cast<int>(proc_.state().state.getProperty(materialProp, 3));
+    const int idx = glass ? static_cast<int>(proc_.state().state.getProperty(materialProp, 3))
+                          : static_cast<int>(proc_.state().state.getProperty(barPresetProp, 0));
+    const int count = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
+    const juce::String name = glass ? materials()[static_cast<size_t>(idx)].name : barPresets()[static_cast<size_t>(idx)].name;
     auto pr = presetText_;
     g.setColour(theme::inkFaint);
     g.setFont(theme::sans(10.5f).withExtraKerningFactor(0.16f));
-    g.drawText(juce::String::fromUTF8("MATERIAL  \xc2\xb7  ") + juce::String(idx + 1) + " / " + juce::String(static_cast<int>(materials().size())),
+    g.drawText(juce::String::fromUTF8(glass ? "MATERIAL  \xc2\xb7  " : "MALLET  \xc2\xb7  ") + juce::String(idx + 1) + " / " + juce::String(count),
                pr.removeFromTop(pr.getHeight() * 0.45f), juce::Justification::bottomLeft);
     g.setColour(theme::amberText);
     g.setFont(theme::mono(13.0f));
-    g.drawText(materials()[static_cast<size_t>(idx)].name, pr, juce::Justification::topLeft);
-    // well labels
-    g.setColour(theme::buttonText);
+    g.drawText(name, pr, juce::Justification::topLeft);
+
     g.setFont(theme::sans(12.5f, true).withExtraKerningFactor(0.14f));
+    g.setColour(glass ? theme::buttonText : theme::buttonText.withAlpha(0.35f));
     g.drawText("ROTATION", rotWell_.withWidth(90).translated(12, 0), juce::Justification::centredLeft);
+    g.setColour(theme::buttonText);
     g.drawText("VIBRATO", vibWell_.withWidth(80).translated(12, 0), juce::Justification::centredLeft);
+    if (!glass) g.drawText("DAMPER", speedWell_.withWidth(90).translated(14, 0), juce::Justification::centredLeft);
 }
 
 void PlayPage::resized() {
@@ -206,6 +255,8 @@ void PlayPage::resized() {
     spindleBtn_.setBounds(792, 12, 108, 36);
     speed_.setBounds(906, 12, 100, 36);
     speedText_ = {1010, 8, 66, 44};
+    damper_.setBounds(880, 12, 126, 36);
+    damperText_ = {1010, 8, 66, 44};
     modifyBtn_.setBounds(1088, 8, 92, 44);
 
     presetWell_ = {20, 63, 360, 40};
@@ -221,6 +272,7 @@ void PlayPage::resized() {
     vibText_ = {1124, 63, 48, 40};
 
     glass_.setBounds(0, 106, 1200, 624);
+    bars_.setBounds(0, 106, 1200, 624);
     strip_.setBounds(20, 736, 1060, 52);
     allOffBtn_.setBounds(1092, 740, 88, 44);
 }
@@ -232,16 +284,30 @@ void PlayPage::timerCallback() {
     brakeBtn_.getProperties().set("mgLamp", d.brake);
     sustainBtn_.repaint();
     brakeBtn_.repaint();
-    const int inst = instrument();
-    glassBtn_.setToggleState(inst == 0, juce::dontSendNotification);
-    barsBtn_.setToggleState(inst == 1, juce::dontSendNotification);
-    glass_.setVisible(inst == 0);
-    strip_.hint = !spindleBtn_.getToggleState() ? "Spindle stopped: rub along a rim to sound it."
-                                                : "Press a rim to sound it. Drag across rims for a glissando.";
+    const bool glass = instrument() == 0;
+    glassBtn_.setToggleState(glass, juce::dontSendNotification);
+    barsBtn_.setToggleState(!glass, juce::dontSendNotification);
+    if (glass_.isVisible() != glass) {
+        glass_.setVisible(glass);
+        bars_.setVisible(!glass);
+        spindleBtn_.setVisible(glass);
+        speed_.setVisible(glass);
+        damper_.setVisible(!glass);
+        rotation_.setEnabled(glass);
+        rotation_.setAlpha(glass ? 1.0f : 0.35f);
+        repaint();
+    }
+    if (glass)
+        strip_.hint = !spindleBtn_.getToggleState() ? "Spindle stopped: rub along a rim to sound it."
+                                                    : "Press a rim to sound it. Drag across rims for a glissando.";
+    else
+        strip_.hint = bars_.lastStrike().isNotEmpty() ? bars_.lastStrike()
+                                                      : "Tap a bar to strike it. Drag across bars for a roll; hold to keep the damper off.";
     strip_.repaint();
     repaint(speedWell_.toNearestInt());
     repaint(rotWell_.toNearestInt());
     repaint(vibWell_.toNearestInt());
+    repaint(presetWell_.toNearestInt());
 }
 
 } // namespace magnetika::plugin

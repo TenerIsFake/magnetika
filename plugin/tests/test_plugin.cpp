@@ -296,6 +296,26 @@ void testGlassTouchAndGlissando() {
     CHECK(held.empty(), "a press away from the rims must not play a note");
 }
 
+void testBarsStrikeAndRoll() {
+    MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    setParam(p, "instrument", 1.0f);
+    p.prepareToPlay(SR, 256);
+    magnetika::plugin::BarsView view(p);
+    view.setSize(1200, 624);
+    const auto a4 = view.barCentreOf(69), b4 = view.barCentreOf(71);
+    view.mouseDown(mouseAt(view, a4, false));
+    auto held = soundingNotes(p, 20);
+    CHECK(held.count(69) == 1 && held.size() == 1, "striking the A4 bar should hold exactly A4 (held %zu)", held.size());
+    CHECK(view.lastStrike().contains("A4 at 0.0"), "a strike at the bar centre should report position ~0: %s", view.lastStrike().toRawUTF8());
+    view.mouseDrag(mouseAt(view, b4, true));
+    held = soundingNotes(p, 20);
+    CHECK(held.count(71) == 1 && held.count(69) == 0, "rolling onto B4 should strike B4 and release A4");
+    view.mouseUp(mouseAt(view, b4, true));
+    held = soundingNotes(p, 5);
+    CHECK(held.empty(), "lifting the mallet should release every bar (%zu still held)", held.size());
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
@@ -349,6 +369,7 @@ int main(int argc, char** argv) {
     testDisplayShowsMidiPedal();
     testSpindleOffStillFingerFades();
     testGlassTouchAndGlissando();
+    testBarsStrikeAndRoll();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;
