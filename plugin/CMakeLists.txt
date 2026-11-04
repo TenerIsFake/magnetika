@@ -15,7 +15,21 @@ juce_add_plugin(Magnetika
 target_sources(Magnetika PRIVATE
   Parameters.cpp
   PluginProcessor.cpp
-  PluginEditor.cpp)
+  PluginEditor.cpp
+  ui/Theme.cpp
+  ui/GlassView.cpp
+  ui/PlayPage.cpp)
+
+# IBM Plex (SIL Open Font License 1.1, ui/fonts/OFL.txt), embedded in the binary.
+juce_add_binary_data(MagnetikaBinary
+  HEADER_NAME BinaryData.h
+  NAMESPACE MagnetikaBinary
+  SOURCES
+    ui/fonts/IBMPlexSansCondensed-Regular.ttf
+    ui/fonts/IBMPlexSansCondensed-SemiBold.ttf
+    ui/fonts/IBMPlexSansCondensed-Bold.ttf
+    ui/fonts/IBMPlexMono-Medium.ttf)
+set_target_properties(MagnetikaBinary PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_compile_definitions(Magnetika PUBLIC
   JUCE_WEB_BROWSER=0
@@ -28,6 +42,7 @@ target_compile_definitions(Magnetika PUBLIC
 target_link_libraries(Magnetika
   PRIVATE
     magnetika_engine
+    MagnetikaBinary
     juce::juce_audio_utils
   PUBLIC
     juce::juce_recommended_config_flags

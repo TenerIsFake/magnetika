@@ -1,7 +1,7 @@
 #pragma once
-// Phase 2 editor: every parameter as a plain control, a material picker, and an
-// on-screen keyboard with the real instrument's range marked. The bowl-view
-// editor is phase 3.
+// The editor: a play page (the instrument in oblique 3-D, performance controls)
+// and a modify page (every parameter). Both are laid out in a 1200 x 800 design
+// canvas that the editor scales to the window, which keeps a 3:2 aspect ratio.
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "PluginProcessor.h"
+#include "ui/PlayPage.h"
+#include "ui/Theme.h"
 
 namespace magnetika::plugin {
 
@@ -23,11 +25,11 @@ private:
     juce::MidiKeyboardComponent& kb_;
 };
 
-class MagnetikaEditor : public juce::AudioProcessorEditor {
+// Every parameter as a plain control, the material picker, and a keyboard.
+// (Phase 3 step 4 replaces this with the faceplate.)
+class ModifyPage : public juce::Component {
 public:
-    explicit MagnetikaEditor(MagnetikaProcessor&);
-    ~MagnetikaEditor() override = default;
-
+    ModifyPage(MagnetikaProcessor&, std::function<void()> onDone);
     void paint(juce::Graphics&) override;
     void resized() override;
 
@@ -38,8 +40,8 @@ private:
     juce::Label title_;
     juce::Label materialLabel_;
     juce::ComboBox material_;
+    juce::TextButton doneBtn_{"DONE"};
 
-    // generated controls, one row per parameter
     struct Row {
         std::unique_ptr<juce::Label> label;
         std::unique_ptr<juce::Component> control;
@@ -49,12 +51,31 @@ private:
         juce::String section;
     };
     std::vector<Row> rows_;
-    std::vector<std::unique_ptr<juce::Label>> headers_;  // one per section, in order
+    std::vector<std::unique_ptr<juce::Label>> headers_;
     juce::Component content_;
     juce::Viewport viewport_;
 
     juce::MidiKeyboardComponent keyboard_;
     RangeStrip range_;
+};
+
+class MagnetikaEditor : public juce::AudioProcessorEditor {
+public:
+    static constexpr int kDesignW = 1200, kDesignH = 800;
+    explicit MagnetikaEditor(MagnetikaProcessor&);
+    ~MagnetikaEditor() override;
+
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    void showModify(bool modify);
+    void poll() { play_.poll(); }  // for offscreen snapshots
+
+private:
+    theme::LookAndFeel laf_;
+    juce::Component canvas_;
+    PlayPage play_;
+    ModifyPage modify_;
+    juce::TooltipWindow tooltips_{this};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MagnetikaEditor)
 };

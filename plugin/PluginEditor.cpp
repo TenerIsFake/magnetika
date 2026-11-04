@@ -30,9 +30,10 @@ void RangeStrip::paint(juce::Graphics& g) {
                bar.toNearestInt(), juce::Justification::centred, true);
 }
 
-MagnetikaEditor::MagnetikaEditor(MagnetikaProcessor& p)
-    : AudioProcessorEditor(&p), proc_(p),
-      keyboard_(p.keyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard), range_(keyboard_) {
+ModifyPage::ModifyPage(MagnetikaProcessor& p, std::function<void()> onDone)
+    : proc_(p), keyboard_(p.keyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard), range_(keyboard_) {
+    doneBtn_.onClick = std::move(onDone);
+    addAndMakeVisible(doneBtn_);
     title_.setText("Magnetika", juce::dontSendNotification);
     title_.setFont(juce::FontOptions(22.0f, juce::Font::bold));
     addAndMakeVisible(title_);
@@ -97,11 +98,9 @@ MagnetikaEditor::MagnetikaEditor(MagnetikaProcessor& p)
     addAndMakeVisible(keyboard_);
     range_.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(range_);
-
-    setSize(980, 720);
 }
 
-void MagnetikaEditor::applyMaterial(int index) {
+void ModifyPage::applyMaterial(int index) {
     if (index < 0 || index >= static_cast<int>(materials().size())) return;
     const auto& m = materials()[static_cast<size_t>(index)];
     auto set = [this](const char* pid, double v) {
@@ -116,13 +115,14 @@ void MagnetikaEditor::applyMaterial(int index) {
     set("g_split", m.split);
 }
 
-void MagnetikaEditor::paint(juce::Graphics& g) {
+void ModifyPage::paint(juce::Graphics& g) {
     g.fillAll(juce::Colour(0xff18242a));
 }
 
-void MagnetikaEditor::resized() {
+void ModifyPage::resized() {
     auto area = getLocalBounds().reduced(10);
     auto top = area.removeFromTop(32);
+    doneBtn_.setBounds(top.removeFromRight(100));
     title_.setBounds(top.removeFromLeft(200));
     materialLabel_.setBounds(top.removeFromLeft(110));
     material_.setBounds(top.removeFromLeft(300).reduced(0, 3));
@@ -157,6 +157,39 @@ void MagnetikaEditor::resized() {
     }
     if (col != 0) y += kRowHeight;
     content_.setSize(width, y + 10);
+}
+
+// ------------------------------------------------------------------ the editor
+
+MagnetikaEditor::MagnetikaEditor(MagnetikaProcessor& p)
+    : AudioProcessorEditor(&p), play_(p, [this] { showModify(true); }), modify_(p, [this] { showModify(false); }) {
+    setLookAndFeel(&laf_);
+    canvas_.addAndMakeVisible(play_);
+    canvas_.addChildComponent(modify_);
+    play_.setBounds(0, 0, kDesignW, kDesignH);
+    modify_.setBounds(0, 0, kDesignW, kDesignH);
+    canvas_.setSize(kDesignW, kDesignH);
+    addAndMakeVisible(canvas_);
+    // resizable, 3:2; the default fits a 200 %-scaled Surface Laptop screen (1128 x 752)
+    setResizable(true, true);
+    setResizeLimits(600, 400, 2400, 1600);
+    if (auto* c = getConstrainer()) c->setFixedAspectRatio(static_cast<double>(kDesignW) / kDesignH);
+    setSize(1050, 700);
+}
+
+MagnetikaEditor::~MagnetikaEditor() { setLookAndFeel(nullptr); }
+
+void MagnetikaEditor::showModify(bool modify) {
+    modify_.setVisible(modify);
+    play_.setVisible(!modify);
+}
+
+void MagnetikaEditor::paint(juce::Graphics& g) { g.fillAll(theme::walnutDark); }
+
+void MagnetikaEditor::resized() {
+    const float s = std::min(getWidth() / static_cast<float>(kDesignW), getHeight() / static_cast<float>(kDesignH));
+    canvas_.setTransform(juce::AffineTransform::scale(s).translated((getWidth() - kDesignW * s) * 0.5f,
+                                                                    (getHeight() - kDesignH * s) * 0.5f));
 }
 
 } // namespace magnetika::plugin

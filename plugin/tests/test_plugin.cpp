@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+#include "../PluginEditor.h"
 #include "../PluginProcessor.h"
 
 using magnetika::plugin::MagnetikaProcessor;
@@ -249,14 +250,78 @@ void testSpindleOffStillFingerFades() {
     CHECK(still < rubbing * 0.3, "still finger on a stopped spindle kept sounding (%.4g vs rubbing %.4g)", still, rubbing);
 }
 
+// A mouse event on `c` at `pos`, from the desktop's main pointer.
+juce::MouseEvent mouseAt(juce::Component& c, juce::Point<float> pos, bool dragged) {
+    auto src = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    return juce::MouseEvent(src, pos, juce::ModifierKeys::leftButtonModifier, juce::MouseInputSource::defaultPressure,
+                            0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, pos, now, 1, dragged);
+}
+
+std::set<int> soundingNotes(MagnetikaProcessor& p, int blocks) {
+    juce::AudioBuffer<float> buf(2, 256);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < blocks; ++b) {
+        buf.clear();
+        p.processBlock(buf, midi);
+    }
+    std::set<int> out;
+    const auto d = p.readDisplay();
+    for (int i = 0; i < d.count; ++i)
+        if (d.voices[static_cast<size_t>(i)].held) out.insert(d.voices[static_cast<size_t>(i)].midi);
+    return out;
+}
+
+void testGlassTouchAndGlissando() {
+    MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    p.prepareToPlay(SR, 256);
+    magnetika::plugin::GlassView view(p);
+    view.setSize(1200, 624);
+    // press the C5 rim: C5 is held
+    const auto c5 = view.rimTopOf(72), e5 = view.rimTopOf(76);
+    view.mouseDown(mouseAt(view, c5, false));
+    auto held = soundingNotes(p, 20);
+    CHECK(held.count(72) == 1 && held.size() == 1, "pressing the C5 rim should hold exactly C5 (held %zu notes)", held.size());
+    // slide to the E5 rim: glissando, C5 released, E5 held
+    view.mouseDrag(mouseAt(view, e5, true));
+    held = soundingNotes(p, 20);
+    CHECK(held.count(76) == 1 && held.count(72) == 0, "sliding to E5 should release C5 and hold E5");
+    view.mouseUp(mouseAt(view, e5, true));
+    held = soundingNotes(p, 5);
+    CHECK(held.empty(), "lifting the finger should release every note (%zu still held)", held.size());
+    // a press far from any rim plays nothing
+    view.mouseDown(mouseAt(view, {5.0f, 5.0f}, false));
+    held = soundingNotes(p, 5);
+    CHECK(held.empty(), "a press away from the rims must not play a note");
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
 // looking at the UI without a desktop session.
-int snapshot(const char* path) {
+int snapshot(const char* path, const juce::String& view) {
     MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
     p.prepareToPlay(SR, 256);
+    // play a sustained chord (C4 E4 G4 C5) for a second and a half, rotating the pattern
+    setParam(p, "sustain", 1.0f);
+    setParam(p, "rotation", 0.35f);
+    if (view == "bars") setParam(p, "instrument", 1.0f);
+    for (int m : {60, 64, 67, 72}) p.pushUiEvent({UiEvent::NoteOn, m, 0.85f});
+    juce::AudioBuffer<float> buf(2, 256);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 280; ++b) {
+        buf.clear();
+        p.processBlock(buf, midi);
+    }
     std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
+    auto* me = dynamic_cast<magnetika::plugin::MagnetikaEditor*>(ed.get());
+    ed->setSize(1200, 800);
+    if (me) {
+        if (view == "modify") me->showModify(true);
+        me->poll();
+    }
     const auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
     juce::File out = juce::File::getCurrentWorkingDirectory().getChildFile(path);
     out.deleteFile();
@@ -270,7 +335,7 @@ int snapshot(const char* path) {
 
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI juce;  // message manager for parameter notifications
-    if (argc == 3 && juce::String(argv[1]) == "--snapshot") return snapshot(argv[2]);
+    if (argc >= 3 && juce::String(argv[1]) == "--snapshot") return snapshot(argv[2], argc >= 4 ? juce::String(argv[3]) : "glass");
     testDefaults();
     testSampleAccurateNoteOn();
     testBlockSizeIndependence();
@@ -283,6 +348,7 @@ int main(int argc, char** argv) {
     testUiNoteSoundsAndIsDisplayed();
     testDisplayShowsMidiPedal();
     testSpindleOffStillFingerFades();
+    testGlassTouchAndGlissando();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;
