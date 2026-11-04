@@ -129,6 +129,11 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
     sustainAtt_ = std::make_unique<BA>(st, id::sustain, sustainBtn_);
     brakeAtt_ = std::make_unique<BA>(st, id::brake, brakeBtn_);
     spindleAtt_ = std::make_unique<BA>(st, id::spindleOn, spindleBtn_);
+    mpeBtn_.setClickingTogglesState(true);
+    mpeBtn_.setTooltip("MPE: per-note pitch bend, pressure (finger load) and slide on member channels. "
+                       "Switches on by itself when the controller sends an MPE configuration message.");
+    addAndMakeVisible(mpeBtn_);
+    mpeAtt_ = std::make_unique<BA>(st, id::mpe, mpeBtn_);
     addAndMakeVisible(speed_);
     speedAtt_ = std::make_unique<SA>(st, "g_spin", speed_);
     speed_.setTitle("Spindle speed");
@@ -383,7 +388,8 @@ void PlayPage::resized() {
     strip_.setBounds(20, 736, 1060, 52);
     allOffBtn_.setBounds(1092, 740, 88, 44);
 
-    statusWell_ = {1068, 116, 112, 118};
+    statusWell_ = {1068, 116, 112, 152};
+    mpeBtn_.setBounds(1076, 236, 96, 26);
     levelGlass_.setBounds(1074, 120, 56, 56);
     levelBars_.setBounds(1074, 120, 56, 56);
     levelGlass_.toFront(false);
@@ -412,6 +418,10 @@ void PlayPage::timerCallback() {
     repaint(statusWell_.toNearestInt());
     // lamps follow the live pedal state, so a MIDI sustain pedal lights SUSTAIN too
     sustainBtn_.getProperties().set("mgLamp", d.sustain);
+    if (static_cast<bool>(mpeBtn_.getProperties()["mgLamp"]) != d.mpe || !mpeBtn_.getProperties().contains("mgLamp")) {
+        mpeBtn_.getProperties().set("mgLamp", d.mpe);  // live state: a configuration message lights it at once
+        mpeBtn_.repaint();
+    }
     brakeBtn_.getProperties().set("mgLamp", d.brake);
     sustainBtn_.repaint();
     brakeBtn_.repaint();

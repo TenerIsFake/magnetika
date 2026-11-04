@@ -587,6 +587,7 @@ int snapshot(const char* path, const juce::String& view) {
     setParam(p, "sustain", 1.0f);
     setParam(p, "rotation", 0.35f);
     if (view.contains("bars")) setParam(p, "instrument", 1.0f);
+    if (view.contains("mpe")) setParam(p, "mpe", 1.0f);
     for (int m : {60, 64, 67, 72}) p.pushUiEvent({UiEvent::NoteOn, m, 0.85f});
     juce::AudioBuffer<float> buf(2, 256);
     juce::MidiBuffer midi;

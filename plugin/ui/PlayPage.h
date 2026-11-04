@@ -69,10 +69,11 @@ private:
 
     juce::TextButton glassBtn_{"GLASS"}, barsBtn_{"BARS"};
     juce::TextButton sustainBtn_{"SUSTAIN"}, brakeBtn_{"BRAKE"}, spindleBtn_{"SPINDLE"}, modifyBtn_{"MODIFY"};
+    juce::TextButton mpeBtn_{"MPE"};  // lit while member channels are read per note
     juce::Slider speed_{juce::Slider::LinearHorizontal, juce::Slider::NoTextBox};
     juce::TextButton prevBtn_{"<"}, nextBtn_{">"}, saveBtn_{"SAVE"};
     StripSlider rotation_{true}, vibrato_{false};
-    std::unique_ptr<BA> sustainAtt_, brakeAtt_, spindleAtt_;
+    std::unique_ptr<BA> sustainAtt_, brakeAtt_, spindleAtt_, mpeAtt_;
     std::unique_ptr<SA> speedAtt_, rotAtt_, vibAtt_;
 
     juce::Slider damper_{juce::Slider::LinearHorizontal, juce::Slider::NoTextBox};
