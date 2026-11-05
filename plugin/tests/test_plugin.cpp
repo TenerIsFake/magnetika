@@ -806,7 +806,9 @@ void testMpeSlideIsRubSpeed() {
         return voiceLevel(p, 72);
     };
     for (bool spindle : {false, true}) {
-        const float slow = level(16, spindle, 1.0f), centre = level(64, spindle, 1.0f), top = level(127, spindle, 1.0f);
+        // 0.7 rev/s (4.4 rad/s at the rim): the top (5 rad/s) is above the centre, so it is exercised
+        const float spin = spindle ? 0.7f : 1.0f;
+        const float slow = level(16, spindle, spin), centre = level(64, spindle, spin), top = level(127, spindle, spin);
         CHECK(slow < centre * 0.5f, "%s: a slow rub should be quieter than centre (%.3g vs %.3g)",
               spindle ? "spindle" : "fixed bowl", slow, centre);
         CHECK(top > centre * 0.7f, "%s: the top of the slide fell off the cliff (%.3g vs centre %.3g)",
@@ -816,6 +818,66 @@ void testMpeSlideIsRubSpeed() {
     const float centreSlow = level(64, true, 0.5f), topSlow = level(127, true, 0.5f);
     CHECK(topSlow > centreSlow * 1.5f, "spindle 0.5 rev/s: rubbing against the glass should be louder (%.3g vs %.3g)",
           topSlow, centreSlow);
+}
+
+void testMpeGlideEdges() {
+    using M = juce::MidiMessage;
+    {   // the zones change mid-glide: the bowl the finger glided to is released (the
+        // controller's note-off names the note it gave, which the glide had left)
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 2, {M::noteOn(2, 72, 0.8f), bendTo(2, 200)});
+        CHECK(isHeld(p, 74), "the glide should have reached D5");
+        playBlocks(p, 2, mcm(1, 7));
+        CHECK(!isHeld(p, 74), "a zone change mid-glide left D5 held for good");
+    }
+    {   // reset-all-controllers mid-glide: neutral expression, but no new attack
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 2, {M::noteOn(2, 72, 0.8f), bendTo(2, 200)});
+        playBlocks(p, 2, {M::controllerEvent(2, 121, 0)});
+        CHECK(isHeld(p, 74) && !isHeld(p, 72), "CC121 mid-glide should stay on D5, not re-strike C5");
+        playBlocks(p, 2, {M::noteOff(2, 72)});
+        CHECK(!isHeld(p, 74), "and the note-off still releases D5");
+    }
+    {   // a repeated note-on on a held bowl strikes nothing, so pressure keeps ruling
+        auto level = [](bool repeat) {
+            MagnetikaProcessor p;
+            mpeProcessor(p);
+            playBlocks(p, 1, {M::noteOn(2, 72, 0.8f), pressure(2, 127)});
+            playBlocks(p, 100, {pressure(2, 40)});
+            if (repeat) playBlocks(p, 1, {M::noteOn(2, 72, 1.0f)});
+            playBlocks(p, 470, {pressure(2, 5)});
+            return voiceLevel(p, 72);
+        };
+        CHECK(level(true) < level(false) * 1.5f, "a repeated note-on stopped the bowl following pressure (%.3g vs %.3g)",
+              level(true), level(false));
+    }
+    {   // gliding onto a bowl another finger holds joins it and leaves that finger's bend:
+        // landing 10 c sharp or 10 c flat of D5 sounds the same
+        auto render = [](double cents) {
+            MagnetikaProcessor p;
+            mpeProcessor(p);
+            playBlocks(p, 20, {bendTo(3, 30), M::noteOn(3, 74, 0.8f)});
+            return playBlocks(p, 100, {M::noteOn(2, 72, 0.8f), bendTo(2, cents)});
+        };
+        CHECK(render(210) == render(190), "a glide joining a held bowl overwrote the other finger's bend");
+    }
+    {   // the spindle stops mid-note: a sounding slide is re-read as the fixed bowl's rub speed
+        auto level = [](bool slide) {
+            MagnetikaProcessor p;
+            mpeProcessor(p);
+            std::vector<M> first;
+            if (slide) first.push_back(M::controllerEvent(2, 74, 64));
+            first.push_back(M::noteOn(2, 72, 0.8f));
+            playBlocks(p, 50, first);
+            setParam(p, "spindleOn", 0.0f);
+            playBlocks(p, 470);
+            return voiceLevel(p, 72);
+        };
+        CHECK(level(true) > level(false) * 3, "the slide was not re-applied when the spindle stopped (%.3g vs %.3g)",
+              level(true), level(false));
+    }
 }
 
 void testPresetStoreRoundTrip() {
@@ -908,6 +970,7 @@ int main(int argc, char** argv) {
     testMpeGlideAcrossBowls();
     testMpePressureLaw();
     testMpeSlideIsRubSpeed();
+    testMpeGlideEdges();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

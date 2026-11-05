@@ -97,7 +97,7 @@ private:
     void releaseMemberNote(int channel, int midi);
     int bowlFor(int channel) const;    // which bowl a glass glide on this channel should be on
     float springCents(int channel) const;  // the bend left for that bowl's coils, clamped
-    void followGlide(int channel);
+    void followGlide(int channel, bool mayHandOff = true);
     static double pressureToLoad(float pressure);
     void applyPressure(int channel);  // the channel's pressure to its bowl, once it has taken over
     void setZones(int lower, int upper);
@@ -169,6 +169,7 @@ private:
     int lowerMembers_ = 0, upperMembers_ = 0;  // switching MPE on with no zones gives a lower zone of 15
     float memberBendRange_ = 48;  // semitones of a full member bend (the parameter, or RPN 0)
     float lastMpeBendRangeParam_ = -1;
+    float lastSlideInputs_[3] = {-1, -1, -1};  // spindle switch, spin, finger speed: slide depends on them
     bool mpeActive_ = false;
     float lastMpeParam_ = -1;
     std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr,

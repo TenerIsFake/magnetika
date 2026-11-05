@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "PluginEditor.h"
@@ -140,6 +141,14 @@ void MagnetikaProcessor::applyParameters(bool force) {
     const float memberRange = mpeBendRangeRaw_->load();
     if (force || memberRange != lastMpeBendRangeParam_) memberBendRange_ = memberRange;
     lastMpeBendRangeParam_ = memberRange;
+    // slide maps onto the rub speed through these: a change re-applies every sounding slide
+    const float slideInputs[3] = {spindleOnRaw_->load(), spinRaw_->load(), fingerSpeedRaw_->load()};
+    if (!std::equal(slideInputs, slideInputs + 3, lastSlideInputs_)) {
+        std::copy(slideInputs, slideInputs + 3, lastSlideInputs_);
+        if (mpeActive_ && !force)
+            for (const auto& c : mpeCh_)
+                if (c.note >= 0 && c.slide >= 0) applySlide(c.note, c.slide, false);
+    }
 
     // the bend range scales the wheel, so a range change moves the bend
     const float bend = bendWheel_ * p_.bendRange->load();
@@ -404,22 +413,22 @@ float MagnetikaProcessor::springCents(int ch) const {
 
 // After a bend: move the finger to another bowl if the glide asks for it, then
 // let the coils bend the bowl it is on.
-void MagnetikaProcessor::followGlide(int ch) {
+void MagnetikaProcessor::followGlide(int ch, bool mayHandOff) {
     auto& c = mpeCh_[static_cast<size_t>(ch)];
     if (c.note < 0) return;
     const int bowl = bowlFor(ch);
-    if (bowl != c.note && perf_.instrument == 0) {  // (after a switch to bars mid-glide: no strike, just bend)
+    // (after a switch to bars mid-glide: no strike, just bend)
+    if (mayHandOff && bowl != c.note && perf_.instrument == 0) {
         auto& left = mpeHeld_[static_cast<size_t>(c.note)];
         if (left > 0) --left;
         if (left == 0) synth_->noteOff(c.note);  // it rings on, as a bowl does when the finger slides off
         c.note = bowl;
         auto& held = mpeHeld_[static_cast<size_t>(bowl)];
         if (held < 255) ++held;
-        if (!synth_->held(bowl)) {
-            synth_->noteOn(bowl, c.velocity);
-            applyPressure(ch);  // a finger already pressing keeps its load on the new bowl
-            if (c.slide >= 0) applySlide(bowl, c.slide, true);
-        }
+        if (synth_->held(bowl)) return;  // joining a bowl another finger holds: its bend is left alone
+        synth_->noteOn(bowl, c.velocity);
+        applyPressure(ch);  // a finger already pressing keeps its load on the new bowl
+        if (c.slide >= 0) applySlide(bowl, c.slide, true);
     }
     synth_->setNoteBend(c.note, springCents(ch));
 }
@@ -436,8 +445,6 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
         const bool again = c.base == midi && c.note >= 0;  // a repeated note-on is a re-strike, not another holder
         if (c.note >= 0 && !again) releaseMemberNote(ch, c.note);  // one note per channel
         c.base = midi;
-        c.velocity = m.getFloatVelocity();
-        c.pressing = false;
         if (!again) {
             c.note = -1;
             c.note = bowlFor(ch);  // the controller may have bent the channel before the note-on
@@ -445,7 +452,12 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
             if (held < 255) ++held;
         }
         const int bowl = c.note;
-        if (!glass || !synth_->held(bowl)) {
+        const bool strike = !glass || !synth_->held(bowl);
+        if (strike || !again) {  // a new contact: the strike sets the load until pressure overtakes it
+            c.velocity = m.getFloatVelocity();
+            c.pressing = false;
+        }
+        if (strike) {
             synth_->noteOn(bowl, c.velocity);
             // the controller sends a note's initial expression before its note-on
             synth_->setNoteBend(bowl, springCents(ch));
@@ -486,8 +498,11 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
                 c.pressure = c.slide = -1;
                 c.pressing = false;
                 if (c.note >= 0) {
-                    followGlide(ch);  // back to the note given
-                    if (glass) synth_->setNoteTouch(c.note, 1);
+                    followGlide(ch, false);  // the spring pulls toward the note given; no new attack
+                    if (glass) {
+                        synth_->setNoteTouch(c.note, 1);
+                        applySlide(c.note, 0.5f, false);  // centre: rubs as without MPE
+                    }
                 }
                 return true;
             default: return false;  // a pedal or other controller sent on a member channel: global
@@ -541,6 +556,11 @@ void MagnetikaProcessor::applySlide(int midi, float slide, bool atNoteOn) {
 }
 
 void MagnetikaProcessor::resetMpeNotes() {
+    // A finger that glided away from its note would never get its note-off: the
+    // controller's note-off names the note it gave. Release those bowls now.
+    if (synth_)
+        for (const auto& c : mpeCh_)
+            if (c.note >= 0 && c.base >= 0 && c.note != c.base) synth_->noteOff(c.note);
     mpeHeld_ = {};
     for (auto& c : mpeCh_) c.note = c.base = -1;
 }
