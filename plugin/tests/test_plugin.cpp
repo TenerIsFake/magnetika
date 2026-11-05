@@ -454,13 +454,14 @@ float voiceLevel(MagnetikaProcessor& p, int midi, bool* held = nullptr) {
 juce::MidiMessage pressure(int ch, int v) { return juce::MidiMessage::channelPressureChange(ch, v); }
 
 void testMpePressureIsPerNote() {
-    // C5 on channel 2 and G5 on channel 3; pressing harder on one channel makes
-    // only that note louder (the finger load on that bowl)
+    // C5 on channel 2 and G5 on channel 3, both pressed (so pressure has taken over
+    // the load), then one eased to a whisper: only that bowl stops speaking
     auto run = [](int p2, int p3) {
         MagnetikaProcessor p;
         mpeProcessor(p);
-        playBlocks(p, 280, {pressure(2, p2), pressure(3, p3), juce::MidiMessage::noteOn(2, 72, 0.8f),
-                            juce::MidiMessage::noteOn(3, 79, 0.8f)});
+        playBlocks(p, 1, {juce::MidiMessage::noteOn(2, 72, 0.8f), juce::MidiMessage::noteOn(3, 79, 0.8f),
+                          pressure(2, 127), pressure(3, 127)});
+        playBlocks(p, 280, {pressure(2, p2), pressure(3, p3)});
         return std::pair<float, float>(voiceLevel(p, 72), voiceLevel(p, 79));
     };
     const auto a = run(10, 120), b = run(120, 10);
@@ -758,6 +759,65 @@ void testMpeGlideAcrossBowls() {
     }
 }
 
+void testMpePressureLaw() {
+    using M = juce::MidiMessage;
+    // pressure is how firmly the finger presses: the glass catches at the same point of
+    // the travel however hard the note was struck (velocity no longer moves it)
+    auto level = [](float vel, int press) {
+        MagnetikaProcessor p;
+        mpeProcessor(p);
+        playBlocks(p, 1, {M::noteOn(2, 72, vel), pressure(2, 127)});  // pressure takes over at once
+        playBlocks(p, 470, {pressure(2, press)});
+        return voiceLevel(p, 72);
+    };
+    float spoke[2] = {};
+    int i = 0;
+    for (float vel : {0.2f, 1.0f}) {
+        const float whisper = level(vel, 15), speaking = level(vel, 50);
+        CHECK(speaking > whisper * 3, "velocity %.1f: 39%% pressure should speak, 12%% whisper (%.3g vs %.3g)", vel, speaking, whisper);
+        spoke[i++] = speaking;
+    }
+    // and the same pressure gives the same tone whatever the velocity (within 4 dB)
+    CHECK(spoke[0] > spoke[1] / 1.6f && spoke[0] < spoke[1] * 1.6f,
+          "39%% pressure sounds different after a soft and a hard strike (%.3g vs %.3g)", spoke[0], spoke[1]);
+    // a hard strike with the controller's pressure still at 0 keeps the strike's load...
+    MagnetikaProcessor a;
+    mpeProcessor(a);
+    playBlocks(a, 470, {pressure(2, 0), M::noteOn(2, 72, 1.0f)});
+    // ...until pressure overtakes it; from then on easing off goes down to a whisper
+    MagnetikaProcessor b;
+    mpeProcessor(b);
+    playBlocks(b, 1, {pressure(2, 0), M::noteOn(2, 72, 1.0f), pressure(2, 127)});
+    playBlocks(b, 470, {pressure(2, 0)});
+    CHECK(voiceLevel(a, 72) > voiceLevel(b, 72) * 3, "a hard strike at pressure 0 collapsed to a whisper (%.3g vs %.3g)",
+          voiceLevel(a, 72), voiceLevel(b, 72));
+}
+
+void testMpeSlideIsRubSpeed() {
+    using M = juce::MidiMessage;
+    // slide is the rub speed and so the loudness, from quiet up to just short of the
+    // speed where the glass stops speaking
+    auto level = [](int slide, bool spindle, float spinRevS) {
+        MagnetikaProcessor p;
+        setParam(p, "spindleOn", spindle ? 1.0f : 0.0f);
+        setParam(p, "g_spin", spinRevS);
+        mpeProcessor(p);
+        playBlocks(p, 470, {M::controllerEvent(2, 74, slide), M::noteOn(2, 72, 0.8f)});
+        return voiceLevel(p, 72);
+    };
+    for (bool spindle : {false, true}) {
+        const float slow = level(16, spindle, 1.0f), centre = level(64, spindle, 1.0f), top = level(127, spindle, 1.0f);
+        CHECK(slow < centre * 0.5f, "%s: a slow rub should be quieter than centre (%.3g vs %.3g)",
+              spindle ? "spindle" : "fixed bowl", slow, centre);
+        CHECK(top > centre * 0.7f, "%s: the top of the slide fell off the cliff (%.3g vs centre %.3g)",
+              spindle ? "spindle" : "fixed bowl", top, centre);
+    }
+    // a slow spindle leaves room above: rubbing against it is louder
+    const float centreSlow = level(64, true, 0.5f), topSlow = level(127, true, 0.5f);
+    CHECK(topSlow > centreSlow * 1.5f, "spindle 0.5 rev/s: rubbing against the glass should be louder (%.3g vs %.3g)",
+          topSlow, centreSlow);
+}
+
 void testPresetStoreRoundTrip() {
     const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("magnetika-preset-test");
     dir.deleteRecursively();
@@ -846,6 +906,8 @@ int main(int argc, char** argv) {
     testMpeBendRangeFromRpn();
     testMpeSlideFollowsTheEffectiveSpin();
     testMpeGlideAcrossBowls();
+    testMpePressureLaw();
+    testMpeSlideIsRubSpeed();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

@@ -355,7 +355,29 @@ void MagnetikaProcessor::setZones(int lower, int upper) {
 // bowl (two fingers on one bowl): it sounds at the first and is released at the
 // last; expression comes from whichever channel spoke last. On the bars every
 // strike sounds, and the damper returns when the last channel lets go.
-double MagnetikaProcessor::pressureToTouch(float pressure) { return 0.2 + 1.8 * pressure; }
+// MPE pressure is how firmly the finger presses, like bow force on a string. On
+// rubbed glass the load decides whether the glass speaks and how (clean to
+// pressed, choked), not how loud: measured on C4-C6 at 1 rev/s, a bowl catches at
+// a load of about 0.94-1.04 and is within +-3 dB from there to 2.0; below, only
+// friction hiss. So the curve puts a resting finger at a whisper (0.3), every
+// note speaking by 30 % of the travel (1.1, past all measured catch points), and
+// the rest of the travel for tone up to 2.0. Loudness belongs to the rub speed
+// (slide). Units are BowlPhysics::velocityLoad's.
+double MagnetikaProcessor::pressureToLoad(float pressure) {
+    const double p = juce::jlimit(0.0, 1.0, static_cast<double>(pressure));
+    return p < 0.3 ? 0.3 + (1.1 - 0.3) * p / 0.3 : 1.1 + (2.0 - 1.1) * (p - 0.3) / 0.7;
+}
+
+// The strike's velocity sets the first contact; pressure takes over once it
+// reaches that load (so a hard strike does not collapse to a whisper because the
+// controller's pressure starts at 0), and from then on rules, down to a whisper.
+void MagnetikaProcessor::applyPressure(int ch) {
+    auto& c = mpeCh_[static_cast<size_t>(ch)];
+    if (c.note < 0 || c.pressure < 0 || perf_.instrument != 0) return;
+    const double load = pressureToLoad(c.pressure);
+    if (!c.pressing && load >= BowlPhysics::velocityLoad(c.velocity)) c.pressing = true;
+    if (c.pressing) synth_->setNoteLoad(c.note, load);
+}
 
 // A bend past the coils' reach. A real armonica cannot glide: a glissando is the
 // finger sliding across rims. So on the glass a long MPE bend hands the finger to
@@ -395,7 +417,7 @@ void MagnetikaProcessor::followGlide(int ch) {
         if (held < 255) ++held;
         if (!synth_->held(bowl)) {
             synth_->noteOn(bowl, c.velocity);
-            if (c.pressure >= 0) synth_->setNoteTouch(bowl, pressureToTouch(c.pressure));
+            applyPressure(ch);  // a finger already pressing keeps its load on the new bowl
             if (c.slide >= 0) applySlide(bowl, c.slide, true);
         }
     }
@@ -415,6 +437,7 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
         if (c.note >= 0 && !again) releaseMemberNote(ch, c.note);  // one note per channel
         c.base = midi;
         c.velocity = m.getFloatVelocity();
+        c.pressing = false;
         if (!again) {
             c.note = -1;
             c.note = bowlFor(ch);  // the controller may have bent the channel before the note-on
@@ -426,7 +449,7 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
             synth_->noteOn(bowl, c.velocity);
             // the controller sends a note's initial expression before its note-on
             synth_->setNoteBend(bowl, springCents(ch));
-            if (c.pressure >= 0) synth_->setNoteTouch(bowl, pressureToTouch(c.pressure));
+            applyPressure(ch);
             if (c.slide >= 0) applySlide(bowl, c.slide, true);
         }
         // joining a bowl another channel holds: its live expression is left alone
@@ -445,7 +468,7 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
     if (m.isChannelPressure() || m.isAftertouch()) {
         const int v = m.isChannelPressure() ? m.getChannelPressureValue() : m.getAfterTouchValue();
         c.pressure = static_cast<float>(v) / 127.0f;
-        if (c.note >= 0 && glass) synth_->setNoteTouch(c.note, pressureToTouch(c.pressure));
+        applyPressure(ch);
         return true;
     }
     if (m.isController()) {
@@ -461,6 +484,7 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
             case 121:  // reset controllers: this channel's expression back to neutral
                 c.bend = 0;
                 c.pressure = c.slide = -1;
+                c.pressing = false;
                 if (c.note >= 0) {
                     followGlide(ch);  // back to the note given
                     if (glass) synth_->setNoteTouch(c.note, 1);
@@ -487,21 +511,32 @@ void MagnetikaProcessor::releaseMemberNote(int ch, int midi) {
     }
 }
 
-// Slide (CC74): on the glass, how the finger travels along the rim; on the
-// bars, where the next strike lands.
+// Slide (CC74) is the rub speed, like bow speed: on rubbed glass it, not the
+// finger load, sets the loudness. Measured on C4-C6: the level rises with the
+// finger's speed relative to the rim up to about 4-6 rad/s, then the glass stops
+// speaking (by 6-7 rad/s; C6 earliest). Centre plays as without MPE. On the bars,
+// slide is where the next strike lands.
 void MagnetikaProcessor::applySlide(int midi, float slide, bool atNoteOn) {
     if (perf_.instrument != 0) {
         if (atNoteOn) synth_->setNoteStrikePos(midi, slide);
         return;
     }
+    const double s = juce::jlimit(0.0, 1.0, static_cast<double>(slide));
+    const bool centre = std::abs(s - 0.5) < 0.01;
     // the same test the engine makes: a turning spindle, or a fixed bowl (spin <= 0.05)
-    if (spindleOnRaw_->load() > 0.5f && spinRaw_->load() > 0.05f) {
-        // spindle running: the finger glides with or against the glass, centre = still
-        const float x = (slide - 0.5f) * 2.0f;
-        synth_->setNoteFingerSpeed(midi, std::abs(x) < 0.02f ? 0.0 : 8.0 * x);
+    const double spin = spinRaw_->load();
+    if (spindleOnRaw_->load() > 0.5f && spin > 0.05) {
+        // spindle running: the finger moves with the glass (slower rub, quieter) or
+        // against it (faster, louder), never past 5 rad/s relative unless the spindle
+        // alone already is; centre is a still finger
+        const double Om = 2 * kPi * spin, top = std::max(Om, 5.0);
+        const double rel = centre ? Om : s < 0.5 ? Om * (0.08 + 0.92 * s / 0.5) : Om + (top - Om) * (s - 0.5) / 0.5;
+        synth_->setNoteFingerSpeed(midi, Om - rel);  // the engine rubs at |finger - rim|
     } else {
-        // fixed bowl: rub speed, centre = the finger-speed parameter, bottom = a still finger (silent)
-        synth_->setNoteFingerSpeed(midi, 2.0 * slide * fingerSpeedRaw_->load());
+        // fixed bowl: bottom = a still finger (silent), centre = the finger-speed
+        // setting, top = 4.5 rad/s, the loudest speed before any note stops speaking
+        const double fs = fingerSpeedRaw_->load(), top = std::max(fs, 4.5);
+        synth_->setNoteFingerSpeed(midi, centre ? fs : s < 0.5 ? fs * s / 0.5 : fs + (top - fs) * (s - 0.5) / 0.5);
     }
 }
 

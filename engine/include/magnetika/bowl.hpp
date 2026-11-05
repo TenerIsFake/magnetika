@@ -50,6 +50,12 @@ public:
     // fast the finger travels along the rim, rad/s. On a stopped spindle a still
     // finger (0) does not excite the bowl, so a touch screen can make the player rub.
     void setTouch(double t) { touch_ = t; }
+    // The finger load a strike of velocity `vel` gives (the JS velScale).
+    static double velocityLoad(double vel) { return 0.4 + 0.8 * vel; }
+    // Sets this note's finger load outright, in the same units as velocityLoad,
+    // so it no longer depends on the strike: MPE pressure, which takes over the
+    // load from velocity once the player presses.
+    void setLoad(double load) { touch_ = load / (velScale_ != 0 ? velScale_ : 1); }
     // Per-note pitch bend in cents (MPE), added to the shared `bend` parameter and
     // applied by the same electronic spring, so it needs the coils engaged and is
     // limited by Fvib like any bend. Reset to 0 by noteOn.

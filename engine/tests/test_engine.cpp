@@ -531,6 +531,24 @@ void testTouchScalesTheFinger() {
     CHECK(again > (full + light) / 2, "retriggered note kept the light touch: %.1f dB (full %.1f, light %.1f)", again, full, light);
 }
 
+void testNoteLoad() {
+    // setLoad in velocityLoad units: the strike's own load is a no-op (bit-identical),
+    // and a set load no longer depends on how hard the note was struck
+    auto run = [](double vel, double load) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.noteOn(72, vel);
+        if (load > 0) s.setNoteLoad(72, load);
+        return runBlocks(s, 2.0, [](int) {});
+    };
+    const Stereo plain = run(0.8, 0), same = run(0.8, BowlPhysics::velocityLoad(0.8));
+    CHECK(same.L == plain.L && same.R == plain.R, "setLoad(velocityLoad(vel)) changed the note");
+    const double soft = run(0.2, 1.6).energyDb(1.5, 2.0), hard = run(1.0, 1.6).energyDb(1.5, 2.0);
+    CHECK(std::fabs(soft - hard) < 1.5, "a set load still depends on velocity: %.1f vs %.1f dB", soft, hard);
+    const double softFree = run(0.2, 0).energyDb(1.5, 2.0);
+    CHECK(soft > softFree + 6, "load 1.6 on a soft strike should make it speak (%.1f vs %.1f dB)", soft, softFree);
+}
+
 void testStillFingerOnStoppedSpindleStopsExciting() {
     // Spindle stopped: the finger must travel along the rim to excite the bowl.
     // One finger keeps rubbing; the other stops at 0.5 s and the note must fade.
@@ -628,6 +646,7 @@ int main() {
     testDamperIndependentOfMass();
     testTouchScalesTheFinger();
     testNoteBend();
+    testNoteLoad();
     testStillFingerOnStoppedSpindleStopsExciting();
     testPatternAngleFollowsTheDrive();
     testSnapshotReportsVoices();

@@ -62,7 +62,7 @@ void BowlPhysics::noteOn(double vel) {
         moving_ = true;
         omF_ = p.fingerSpeed;
     }
-    velScale_ = 0.4 + 0.8 * vel;
+    velScale_ = velocityLoad(vel);
     touch_ = 1.0;  // a new strike starts at full finger load; a touch screen sets it after noteOn
     noteBend_ = 0;  // likewise, no per-note bend carries into the next note
     psi_ = thF_;

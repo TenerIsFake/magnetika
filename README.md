@@ -151,15 +151,33 @@ members 2–16.
 
 | Per-note control | Glass | Bars |
 |---|---|---|
-| Pitch bend | bends that bowl through the coils' spring | bends that bar |
-| Pressure (channel or poly aftertouch) | finger load on that bowl: press harder, louder and grittier | — |
-| Slide (CC74) | spindle running: the finger glides with or against the glass (centre = still); spindle stopped: rub speed (centre = the finger-speed setting, bottom = a still finger, silent) | where the mallet lands (at note-on) |
+| Pitch bend | the coils bend that bowl; past their reach the finger slides to the next bowl | bends that bar (clamped) |
+| Pressure (channel or poly aftertouch) | how firmly the finger presses: whether and how the glass speaks | — |
+| Slide (CC74) | rub speed: the loudness | where the mallet lands (at note-on) |
 
-`MPE bend range` (default 48 semitones, the MPE standard) says what a full member-channel bend
-means, as the controller sends it. A physical spring cannot bend a bowl by semitones, so the
-result is clamped to `Pitch-bend range` (at most ±40 ¢): small finger movements give the whole
-physical bend. Expression sent before a note-on applies to that note. Two channels on the same
-note play one bowl or bar, which sounds at the first and is released at the last.
+The glass plays like a bowed string, and the mapping follows what the model does (measured on
+C4–C6):
+
+- **Pressure is finger load, like bow force.** It decides whether the glass speaks, not how
+  loud it is. A resting finger (0) whispers; every note has caught by about 30 % of the travel;
+  the rest goes from a clean tone to a pressed, choked one at about the same level. The strike's
+  velocity sets the first contact, and pressure takes over once it reaches that load, so a hard
+  strike is not silenced by a controller whose pressure starts at 0. From then on the catch point
+  is the same however hard the note was struck.
+- **Slide is rub speed, like bow speed, and so the loudness.** Rubbed glass gets louder with the
+  finger's speed against the rim up to about 4–6 rad/s, then stops speaking. Spindle stopped:
+  bottom is a still finger (silent), centre the finger-speed setting, top 4.5 rad/s. Spindle
+  running: the finger moves with the glass (a slower rub, quieter) below centre, or against it
+  above, never past 5 rad/s unless the spindle alone already is. Centre plays as without MPE.
+- **Glide.** A real armonica cannot glide; a glissando is a finger crossing rims. Past half a
+  semitone (plus 5 ¢, so it does not flicker) the finger hands off to the nearest bowl, whose
+  coils supply the rest; the bowl left behind rings on. A semitone glide is continuous within
+  each bowl and steps about 20 ¢ at each hand-off. `MPE glide across bowls` turns this off.
+
+`MPE bend range` (default 48 semitones, the MPE standard, or RPN 0 from the controller) says what a
+full member-channel bend means. The coils' spring is limited to `Pitch-bend range` (at most
+±40 ¢). Expression sent before a note-on applies to that note. Two channels on the same note
+play one bowl or bar, which sounds at the first and is released at the last.
 
 ## Notes on the port
 

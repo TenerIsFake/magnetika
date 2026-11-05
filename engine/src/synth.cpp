@@ -192,6 +192,11 @@ void Synth::setNoteTouch(int midi, double touch) {
         if (voices_[i].kind == Voice::Kind::Bowl && voices_[i].midi == midi) voices_[i].bowl.setTouch(touch);
 }
 
+void Synth::setNoteLoad(int midi, double load) {
+    for (int i = 0; i < numVoices_; ++i)
+        if (voices_[i].kind == Voice::Kind::Bowl && voices_[i].midi == midi) voices_[i].bowl.setLoad(load);
+}
+
 void Synth::setNoteFingerSpeed(int midi, double radPerSec) {
     for (int i = 0; i < numVoices_; ++i)
         if (voices_[i].kind == Voice::Kind::Bowl && voices_[i].midi == midi) voices_[i].bowl.setFingerSpeed(radPerSec);

@@ -73,6 +73,7 @@ public:
     // Touch interface for an editor (see BowlPhysics::setTouch / setFingerSpeed).
     // Apply to the glass voice playing `midi`, if any; bars ignore them.
     void setNoteTouch(int midi, double touch);
+    void setNoteLoad(int midi, double load);  // BowlPhysics::setLoad
     void setNoteFingerSpeed(int midi, double radPerSec);
     // Bars: where this strike lands, 0 = centre .. 1 = end, overriding the
     // strikePos parameter for this voice only (call right after noteOn).

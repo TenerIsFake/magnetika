@@ -98,7 +98,8 @@ private:
     int bowlFor(int channel) const;    // which bowl a glass glide on this channel should be on
     float springCents(int channel) const;  // the bend left for that bowl's coils, clamped
     void followGlide(int channel);
-    static double pressureToTouch(float pressure);
+    static double pressureToLoad(float pressure);
+    void applyPressure(int channel);  // the channel's pressure to its bowl, once it has taken over
     void setZones(int lower, int upper);
     void applySlide(int midi, float slide, bool atNoteOn);
     void resetMpeNotes();
@@ -157,6 +158,7 @@ private:
         int note = -1;        // the bowl or bar this member channel is playing
         int base = -1;        // the note it was given (differs from `note` after a glide)
         float velocity = 0.8f;
+        bool pressing = false;  // pressure has overtaken the strike's load since the note-on
         float bend = 0;       // -1 .. 1
         float pressure = -1;  // 0 .. 1, or -1 until the controller sends one
         float slide = -1;     // CC74 0 .. 1, or -1 until sent
