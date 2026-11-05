@@ -583,7 +583,7 @@ void testBuildVariation() {
         maxC = std::max(maxC, c);
         qOk = qOk && std::fabs(s.vary(m, ParamId::Q2, 1000) / 1000 - 1) <= 0.2 + 1e-12;
         splitOk = splitOk && std::fabs(s.vary(m, ParamId::split, 1) - 1) <= 0.4 + 1e-12;
-        angleOk = angleOk && std::fabs(s.vary(m, ParamId::Count, 0)) <= 3.14159265358979 / 4 + 1e-12;
+        angleOk = angleOk && std::fabs(s.axisAngle(m)) <= 3.14159265358979 / 4 + 1e-12;
         CHECK(s.vary(m, ParamId::N, 2.5) == 2.5, "finger load is the player's, not the bowl's: varied at %d", m);
     }
     CHECK(minC >= -3 && maxC <= 3 && maxC - minC > 2, "tuning spread should stay within +-3 c and use it: %.2f..%.2f", minC, maxC);

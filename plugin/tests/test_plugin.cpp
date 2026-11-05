@@ -804,6 +804,7 @@ void testMpeSlideIsRubSpeed() {
         MagnetikaProcessor p;
         setParam(p, "spindleOn", spindle ? 1.0f : 0.0f);
         setParam(p, "g_spin", spinRevS);
+        setParam(p, "variation", 0.0f);  // the measured bowl, not one hash pattern of it
         mpeProcessor(p);
         const auto out = playBlocks(p, 470, {M::controllerEvent(2, 74, slide), M::noteOn(2, 72, 0.8f)});
         double e = 0;

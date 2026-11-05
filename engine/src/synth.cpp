@@ -89,21 +89,27 @@ double unitHash(std::uint32_t serial, int midi, int slot) {
 }
 } // namespace
 
+// Each varied quantity has its own fixed hash slot (not the ParamId's ordinal), so
+// an instrument number keeps its sound when parameters are added in later versions.
 double Synth::vary(int midi, ParamId id, double value) const {
     if (variation_ <= 0 || midi < 0) return value;
-    const double u = unitHash(serial_, midi, static_cast<int>(id)) * variation_;
+    auto u = [&](int slot) { return unitHash(serial_, midi, slot) * variation_; };
     switch (id) {
-        case ParamId::f0: return value * std::pow(2.0, 3.0 * u / 1200.0);  // +-3 c: the tuner's tolerance
-        case ParamId::Q1:
-        case ParamId::Q2:
-        case ParamId::Q3: return value * (1 + 0.2 * u);       // surface finish
-        case ParamId::split: return value * (1 + 0.4 * u);    // wall-thickness asymmetry
-        case ParamId::kappa: return value * (1 + 0.15 * u);  // Bryan factor
-        case ParamId::r3:
-        case ParamId::ratio: return value * (1 + 0.01 * u);   // shape, arching
-        case ParamId::Count: return u * 3.14159265358979 / 4;  // principal-axis angle, +-45 deg
+        case ParamId::f0: return value * std::pow(2.0, 3.0 * u(1) / 1200.0);  // +-3 c: the tuner's tolerance
+        case ParamId::Q1: return value * (1 + 0.2 * u(2));                     // surface finish
+        case ParamId::Q2: return value * (1 + 0.2 * u(3));
+        case ParamId::Q3: return value * (1 + 0.2 * u(4));
+        case ParamId::split: return value * (1 + 0.4 * u(5));                  // wall-thickness asymmetry
+        case ParamId::kappa: return value * (1 + 0.15 * u(6));                 // Bryan factor
+        case ParamId::r3: return value * (1 + 0.01 * u(7));                    // shell shape
+        case ParamId::ratio: return value * (1 + 0.01 * u(8));                 // bar arching
         default: return value;
     }
+}
+
+double Synth::axisAngle(int midi) const {
+    if (variation_ <= 0 || midi < 0) return 0.0;
+    return unitHash(serial_, midi, 9) * variation_ * 3.14159265358979 / 4;  // +-45 deg
 }
 
 void Synth::make(Voice& v, int midi) {
@@ -122,7 +128,7 @@ void Synth::make(Voice& v, int midi) {
         v.bowl.setNyquistGuard(nyquistGuard_);
         if (scaleModalMass_) v.bowl.setModalMass(0.02 * std::pow(2.0, (72 - midi) / 12.0));
         if (revBSizes_) v.bowl.setRimRadius(revBDiameterMm(midi) / 2000.0);
-        if (variation_ > 0) v.bowl.setAxisAngle(vary(midi, ParamId::Count, 0.0));  // Count: the axis-angle slot
+        if (variation_ > 0) v.bowl.setAxisAngle(axisAngle(midi));
     } else {
         v.bar.setNyquistGuard(nyquistGuard_);
         if (scaleModalMass_) v.bar.setModalMass(0.2 * std::pow(2.0, (72 - midi) / 24.0));

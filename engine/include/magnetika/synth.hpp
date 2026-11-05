@@ -68,6 +68,7 @@ public:
     //    from `serial`, so one instrument always sounds the same. Next note on.
     void setVariation(std::uint32_t serial, double amount) { serial_ = serial; variation_ = amount; }
     double vary(int midi, ParamId id, double value) const;  // a parameter as this note's bowl or bar has it
+    double axisAngle(int midi) const;  // this note's bowl: where its principal axes start, radians
 
     void noteOn(int midi, double vel);
     void noteOff(int midi);
