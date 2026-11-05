@@ -30,6 +30,7 @@ MagnetikaProcessor::MagnetikaProcessor()
     mpeBendRangeRaw_ = get(id::mpeBendRange);
     fingerSpeedRaw_ = get("g_fingerSpeed");
     spinRaw_ = get("g_spin");
+    mpeGlideRaw_ = get(id::mpeGlide);
     rpnMsb_.fill(127);
     rpnLsb_.fill(127);
     startTimerHz(20);
@@ -354,43 +355,97 @@ void MagnetikaProcessor::setZones(int lower, int upper) {
 // bowl (two fingers on one bowl): it sounds at the first and is released at the
 // last; expression comes from whichever channel spoke last. On the bars every
 // strike sounds, and the damper returns when the last channel lets go.
+double MagnetikaProcessor::pressureToTouch(float pressure) { return 0.2 + 1.8 * pressure; }
+
+// A bend past the coils' reach. A real armonica cannot glide: a glissando is the
+// finger sliding across rims. So on the glass a long MPE bend hands the finger to
+// the bowl nearest the requested pitch once it is more than 55 c (half a semitone
+// plus 5 c, so it does not flicker at the boundary) from the current one; that
+// bowl's coils supply the rest, up to the pitch-bend range, and the bowl left
+// behind rings on. The bars cannot be glided onto without a strike: they clamp.
+int MagnetikaProcessor::bowlFor(int ch) const {
+    const auto& c = mpeCh_[static_cast<size_t>(ch)];
+    if (c.base < 0) return c.note;
+    if (perf_.instrument != 0 || mpeGlideRaw_->load() < 0.5f) return c.base;
+    const float want = c.bend * memberBendRange_ * 100.0f;  // cents from the note given
+    const int target = juce::jlimit(0, 127, c.base + static_cast<int>(std::lround(want / 100.0f)));
+    if (c.note < 0) return target;  // a new note starts on the nearest bowl
+    return std::abs(want - 100.0f * static_cast<float>(c.note - c.base)) > 55.0f ? target : c.note;
+}
+
+float MagnetikaProcessor::springCents(int ch) const {
+    const auto& c = mpeCh_[static_cast<size_t>(ch)];
+    const float range = p_.bendRange->load();  // what the coils' spring may do, cents
+    const float want = c.bend * memberBendRange_ * 100.0f - 100.0f * static_cast<float>(c.note - c.base);
+    return juce::jlimit(-range, range, want);
+}
+
+// After a bend: move the finger to another bowl if the glide asks for it, then
+// let the coils bend the bowl it is on.
+void MagnetikaProcessor::followGlide(int ch) {
+    auto& c = mpeCh_[static_cast<size_t>(ch)];
+    if (c.note < 0) return;
+    const int bowl = bowlFor(ch);
+    if (bowl != c.note && perf_.instrument == 0) {  // (after a switch to bars mid-glide: no strike, just bend)
+        auto& left = mpeHeld_[static_cast<size_t>(c.note)];
+        if (left > 0) --left;
+        if (left == 0) synth_->noteOff(c.note);  // it rings on, as a bowl does when the finger slides off
+        c.note = bowl;
+        auto& held = mpeHeld_[static_cast<size_t>(bowl)];
+        if (held < 255) ++held;
+        if (!synth_->held(bowl)) {
+            synth_->noteOn(bowl, c.velocity);
+            if (c.pressure >= 0) synth_->setNoteTouch(bowl, pressureToTouch(c.pressure));
+            if (c.slide >= 0) applySlide(bowl, c.slide, true);
+        }
+    }
+    synth_->setNoteBend(c.note, springCents(ch));
+}
+
+// Per-note expression on a member channel. A note shared by two channels is one
+// bowl (two fingers on one bowl): it sounds at the first and is released at the
+// last; expression comes from whichever channel spoke last. On the bars every
+// strike sounds, and the damper returns when the last channel lets go.
 bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
     auto& c = mpeCh_[static_cast<size_t>(ch)];
     const bool glass = perf_.instrument == 0;
-    auto bendCents = [this](float bend) {
-        const float range = p_.bendRange->load();  // what the coils' spring may do, cents
-        return juce::jlimit(-range, range, bend * memberBendRange_ * 100.0f);
-    };
     if (m.isNoteOn()) {
         const int midi = m.getNoteNumber();
-        if (c.note >= 0 && c.note != midi) releaseMemberNote(ch, c.note);  // one note per channel
-        const bool again = c.note == midi;  // a repeated note-on is a re-strike, not another holder
-        c.note = midi;
-        auto& held = mpeHeld_[static_cast<size_t>(midi)];
-        if (!again && held < 255) ++held;
-        if (!glass || !synth_->held(midi)) {
-            synth_->noteOn(midi, m.getFloatVelocity());
+        const bool again = c.base == midi && c.note >= 0;  // a repeated note-on is a re-strike, not another holder
+        if (c.note >= 0 && !again) releaseMemberNote(ch, c.note);  // one note per channel
+        c.base = midi;
+        c.velocity = m.getFloatVelocity();
+        if (!again) {
+            c.note = -1;
+            c.note = bowlFor(ch);  // the controller may have bent the channel before the note-on
+            auto& held = mpeHeld_[static_cast<size_t>(c.note)];
+            if (held < 255) ++held;
+        }
+        const int bowl = c.note;
+        if (!glass || !synth_->held(bowl)) {
+            synth_->noteOn(bowl, c.velocity);
             // the controller sends a note's initial expression before its note-on
-            synth_->setNoteBend(midi, bendCents(c.bend));
-            if (c.pressure >= 0) synth_->setNoteTouch(midi, 0.2 + 1.8 * c.pressure);
-            if (c.slide >= 0) applySlide(midi, c.slide, true);
+            synth_->setNoteBend(bowl, springCents(ch));
+            if (c.pressure >= 0) synth_->setNoteTouch(bowl, pressureToTouch(c.pressure));
+            if (c.slide >= 0) applySlide(bowl, c.slide, true);
         }
         // joining a bowl another channel holds: its live expression is left alone
         return true;
     }
     if (m.isNoteOff()) {
-        releaseMemberNote(ch, m.getNoteNumber());
+        const int midi = m.getNoteNumber();
+        releaseMemberNote(ch, c.base == midi && c.note >= 0 ? c.note : midi);  // the bowl a glide moved to
         return true;
     }
     if (m.isPitchWheel()) {
         c.bend = static_cast<float>(m.getPitchWheelValue() - 8192) / 8192.0f;
-        if (c.note >= 0) synth_->setNoteBend(c.note, bendCents(c.bend));
+        followGlide(ch);
         return true;
     }
     if (m.isChannelPressure() || m.isAftertouch()) {
         const int v = m.isChannelPressure() ? m.getChannelPressureValue() : m.getAfterTouchValue();
         c.pressure = static_cast<float>(v) / 127.0f;
-        if (c.note >= 0 && glass) synth_->setNoteTouch(c.note, 0.2 + 1.8 * c.pressure);
+        if (c.note >= 0 && glass) synth_->setNoteTouch(c.note, pressureToTouch(c.pressure));
         return true;
     }
     if (m.isController()) {
@@ -407,7 +462,7 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
                 c.bend = 0;
                 c.pressure = c.slide = -1;
                 if (c.note >= 0) {
-                    synth_->setNoteBend(c.note, 0);
+                    followGlide(ch);  // back to the note given
                     if (glass) synth_->setNoteTouch(c.note, 1);
                 }
                 return true;
@@ -424,7 +479,7 @@ void MagnetikaProcessor::releaseMemberNote(int ch, int midi) {
     auto& c = mpeCh_[static_cast<size_t>(ch)];
     auto& held = mpeHeld_[static_cast<size_t>(midi)];
     if (c.note == midi) {
-        c.note = -1;
+        c.note = c.base = -1;
         if (held > 0) --held;
         if (held == 0) synth_->noteOff(midi);
     } else if (held == 0) {
@@ -452,7 +507,7 @@ void MagnetikaProcessor::applySlide(int midi, float slide, bool atNoteOn) {
 
 void MagnetikaProcessor::resetMpeNotes() {
     mpeHeld_ = {};
-    for (auto& c : mpeCh_) c.note = -1;
+    for (auto& c : mpeCh_) c.note = c.base = -1;
 }
 
 void MagnetikaProcessor::renderRange(juce::AudioBuffer<float>& buffer, int start, int end) {

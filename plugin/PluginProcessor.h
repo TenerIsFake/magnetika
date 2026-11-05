@@ -95,6 +95,10 @@ private:
     bool handleRpn(int channel, int cc, int value);  // true if the CC was RPN plumbing
     bool handleMpeMember(int channel, const juce::MidiMessage& m);  // false: not per-note, use the global map
     void releaseMemberNote(int channel, int midi);
+    int bowlFor(int channel) const;    // which bowl a glass glide on this channel should be on
+    float springCents(int channel) const;  // the bend left for that bowl's coils, clamped
+    void followGlide(int channel);
+    static double pressureToTouch(float pressure);
     void setZones(int lower, int upper);
     void applySlide(int midi, float slide, bool atNoteOn);
     void resetMpeNotes();
@@ -150,7 +154,9 @@ private:
     // 2.., an upper zone master 16 and members ..15. With no configuration message,
     // switching MPE on gives the usual lower zone of 15 members.
     struct MpeChannel {
-        int note = -1;        // the note this member channel is playing
+        int note = -1;        // the bowl or bar this member channel is playing
+        int base = -1;        // the note it was given (differs from `note` after a glide)
+        float velocity = 0.8f;
         float bend = 0;       // -1 .. 1
         float pressure = -1;  // 0 .. 1, or -1 until the controller sends one
         float slide = -1;     // CC74 0 .. 1, or -1 until sent
@@ -163,7 +169,8 @@ private:
     float lastMpeBendRangeParam_ = -1;
     bool mpeActive_ = false;
     float lastMpeParam_ = -1;
-    std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr;
+    std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr,
+                       *mpeGlideRaw_ = nullptr;
 
     // seqlock: odd while the audio thread writes, even when the copy is consistent
     std::atomic<std::uint32_t> dispSeq_{0};

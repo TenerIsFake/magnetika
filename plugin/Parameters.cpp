@@ -111,6 +111,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(std::make_unique<APB>(juce::ParameterID{id::spindleOn, 1}, "Spindle running", true));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::mpe, 1}, "MPE", false));
     layout.add(fl(id::mpeBendRange, "MPE bend range", linear(1, 96, 1), 48, "st"));
+    layout.add(std::make_unique<APB>(juce::ParameterID{id::mpeGlide, 1}, "MPE glide across bowls", true));
 
     // ---- glass (player GLASS spec; damper is a plugin addition)
     layout.add(fl("g_Q2", "Glass (2,0) Q", logRange(100, 100000), 3500));

@@ -472,6 +472,7 @@ void testMpePressureIsPerNote() {
 void testMpeBendIsPerNoteAndClamped() {
     auto run = [](int bendCh, int wheel, float bendRangeCents) {
         MagnetikaProcessor p;
+        setParam(p, "mpeGlide", 0.0f);  // the spring alone (with glide, these bends move to other bowls)
         mpeProcessor(p);
         setParam(p, "bendRange", bendRangeCents);
         return playBlocks(p, 200, {juce::MidiMessage::pitchWheel(bendCh, wheel), juce::MidiMessage::noteOn(2, 72, 0.8f)});
@@ -706,6 +707,57 @@ void testMpeSlideFollowsTheEffectiveSpin() {
     CHECK(glass(0) < glass(64) * 0.3f, "spin 0 with the spindle on: slide not read as rub speed (%.3g vs %.3g)", glass(0), glass(64));
 }
 
+// A member-channel pitch-wheel message for `cents`, with the default 48-semitone range.
+juce::MidiMessage bendTo(int ch, double cents) {
+    return juce::MidiMessage::pitchWheel(ch, juce::jlimit(0, 16383, 8192 + static_cast<int>(std::lround(cents / 4800.0 * 8192.0))));
+}
+
+void testMpeGlideAcrossBowls() {
+    using M = juce::MidiMessage;
+    MagnetikaProcessor p;
+    mpeProcessor(p);
+    playBlocks(p, 4, {M::noteOn(2, 72, 0.8f)});
+    auto on = [&](double cents) {
+        playBlocks(p, 2, {bendTo(2, cents)});
+        int bowl = -1;
+        for (int m = 60; m <= 84; ++m)
+            if (isHeld(p, m)) bowl = bowl < 0 ? m : 999;  // 999: more than one held
+        return bowl;
+    };
+    CHECK(on(30) == 72, "a 30 c bend should stay on the C5 bowl's coils");
+    CHECK(on(52) == 72, "52 c is inside the hysteresis band: still C5");
+    CHECK(on(60) == 73, "past 55 c the finger should slide to C#5");
+    CHECK(on(100) == 73, "a full semitone should sit on C#5");
+    CHECK(on(46) == 73, "46 c is inside the band from C#5: still C#5");
+    CHECK(on(40) == 72, "back past the band: the finger should return to C5");
+    CHECK(on(230) == 74, "a fast 2.3-semitone bend should land on D5");
+    CHECK(voiceLevel(p, 72) > 0, "the bowl left behind should ring on");
+    playBlocks(p, 2, {M::noteOff(2, 72)});
+    bool anyHeld = false;
+    for (int m = 60; m <= 84; ++m) anyHeld = anyHeld || isHeld(p, m);
+    CHECK(!anyHeld, "the note-off for C5 should release the bowl the glide moved to");
+    // a channel bent before its note-on starts on the nearest bowl
+    playBlocks(p, 2, {bendTo(3, 200), M::noteOn(3, 72, 0.8f)});
+    CHECK(isHeld(p, 74) && !isHeld(p, 72), "a pre-bent note should start on D5");
+    playBlocks(p, 2, {M::noteOff(3, 72)});
+    CHECK(!isHeld(p, 74), "and release from there");
+    // glide switched off: the spring clamps, no hand-off
+    {
+        MagnetikaProcessor q;
+        setParam(q, "mpeGlide", 0.0f);
+        mpeProcessor(q);
+        playBlocks(q, 2, {M::noteOn(2, 72, 0.8f), bendTo(2, 100)});
+        CHECK(isHeld(q, 72) && !isHeld(q, 73), "with glide off a semitone bend must stay on C5");
+    }
+    // the bars cannot be glided onto: they clamp
+    {
+        MagnetikaProcessor q;
+        mpeProcessor(q, true);
+        playBlocks(q, 2, {M::noteOn(2, 72, 0.8f), bendTo(2, 100)});
+        CHECK(isHeld(q, 72, false) && !isHeld(q, 73, false), "a bars bend must not strike the next bar");
+    }
+}
+
 void testPresetStoreRoundTrip() {
     const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("magnetika-preset-test");
     dir.deleteRecursively();
@@ -793,6 +845,7 @@ int main(int argc, char** argv) {
     testMpeZones();
     testMpeBendRangeFromRpn();
     testMpeSlideFollowsTheEffectiveSpin();
+    testMpeGlideAcrossBowls();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;
