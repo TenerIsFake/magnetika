@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -797,13 +798,18 @@ void testMpeSlideIsRubSpeed() {
     using M = juce::MidiMessage;
     // slide is the rub speed and so the loudness, from quiet up to just short of the
     // speed where the glass stops speaking
+    // output RMS over the last second: one envelope reading swings by 2x as the two
+    // (2,0) modes beat, which would hide a trend; the cliff itself is a 20 dB drop
     auto level = [](int slide, bool spindle, float spinRevS) {
         MagnetikaProcessor p;
         setParam(p, "spindleOn", spindle ? 1.0f : 0.0f);
         setParam(p, "g_spin", spinRevS);
         mpeProcessor(p);
-        playBlocks(p, 470, {M::controllerEvent(2, 74, slide), M::noteOn(2, 72, 0.8f)});
-        return voiceLevel(p, 72);
+        const auto out = playBlocks(p, 470, {M::controllerEvent(2, 74, slide), M::noteOn(2, 72, 0.8f)});
+        double e = 0;
+        const size_t from = out.size() - 48000;
+        for (size_t i = from; i < out.size(); ++i) e += static_cast<double>(out[i]) * out[i];
+        return static_cast<float>(std::sqrt(e / 48000));
     };
     for (bool spindle : {false, true}) {
         // 0.7 rev/s (4.4 rad/s at the rim): the top (5 rad/s) is above the centre, so it is exercised
@@ -878,6 +884,24 @@ void testMpeGlideEdges() {
         CHECK(level(true) > level(false) * 3, "the slide was not re-applied when the spindle stopped (%.3g vs %.3g)",
               level(true), level(false));
     }
+}
+
+void testBuildParameters() {
+    // Rev B sizes, Instrument No. and Build variation reach the engine (next note on)
+    auto render = [](float revB, int serial, float variation, int midi) {
+        MagnetikaProcessor p;
+        p.setPlayConfigDetails(0, 2, SR, 256);
+        setParam(p, "revBSizes", revB);
+        setParam(p, "serialNo", static_cast<float>(serial));
+        setParam(p, "variation", variation);
+        p.prepareToPlay(SR, 256);
+        return playBlocks(p, 100, {juce::MidiMessage::noteOn(1, midi, 0.8f)});
+    };
+    const auto base = render(0, 1, 0.5f, 72);
+    CHECK(render(0, 1, 0.5f, 72) == base, "one instrument number must always sound the same");
+    CHECK(render(0, 2, 0.5f, 72) != base, "Instrument No. had no effect");
+    CHECK(render(0, 1, 0.0f, 72) != base, "Build variation had no effect");
+    CHECK(render(1, 1, 0.5f, 60) != render(0, 1, 0.5f, 60), "Rev B bowl sizes had no effect on C4");
 }
 
 void testPresetStoreRoundTrip() {
@@ -971,6 +995,7 @@ int main(int argc, char** argv) {
     testMpePressureLaw();
     testMpeSlideIsRubSpeed();
     testMpeGlideEdges();
+    testBuildParameters();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

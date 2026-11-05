@@ -31,7 +31,7 @@ void Synth::setParams(Instrument which, const ParamValue* values, int count) {
         Voice& v = voices_[vi];
         if (v.kind != kind) continue;
         const double f0 = kind == Voice::Kind::Bowl ? v.bowl.p.f0 : v.bar.p.f0;
-        for (int i = 0; i < count; ++i) v.set(values[i].id, values[i].value);
+        for (int i = 0; i < count; ++i) v.set(values[i].id, vary(v.midi, values[i].id, values[i].value));
         if (hasF0) v.set(ParamId::f0, f0);
         if (hasListen) v.set(ParamId::listen, listen + (v.midi - 72) / 24.0 * 0.5);
     }
@@ -68,21 +68,61 @@ void Synth::applyPerf(Voice& v) {
     v.set(ParamId::G, G);
 }
 
+double Synth::revBDiameterMm(int midi) {
+    // rev B bowl table, C4..C6 (instrument_schematic_revB, section 2)
+    static constexpr double kRevB[25] = {147, 143, 139, 135, 131, 127, 123, 120, 117, 113, 110, 107, 104,
+                                         101, 98,  95,  93,  90,  87,  85,  82,  80,  78,  76,  73};
+    if (midi >= 60 && midi <= 84) return kRevB[midi - 60];
+    return 104.0 * std::pow(2.0, (72 - midi) / 24.0);  // the table's sqrt 2 per octave, anchored at C5
+}
+
+namespace {
+// A fixed pseudo-random number in [-1, 1] for (serial, note, slot): splitmix64.
+double unitHash(std::uint32_t serial, int midi, int slot) {
+    std::uint64_t z = (static_cast<std::uint64_t>(serial) << 32) ^ (static_cast<std::uint64_t>(midi & 0xff) << 8) ^
+                      static_cast<std::uint64_t>(slot & 0xff);
+    z += 0x9e3779b97f4a7c15ull;
+    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
+    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
+    z ^= z >> 31;
+    return static_cast<double>(z >> 11) / static_cast<double>(1ull << 52) - 1.0;
+}
+} // namespace
+
+double Synth::vary(int midi, ParamId id, double value) const {
+    if (variation_ <= 0 || midi < 0) return value;
+    const double u = unitHash(serial_, midi, static_cast<int>(id)) * variation_;
+    switch (id) {
+        case ParamId::f0: return value * std::pow(2.0, 3.0 * u / 1200.0);  // +-3 c: the tuner's tolerance
+        case ParamId::Q1:
+        case ParamId::Q2:
+        case ParamId::Q3: return value * (1 + 0.2 * u);       // surface finish
+        case ParamId::split: return value * (1 + 0.4 * u);    // wall-thickness asymmetry
+        case ParamId::kappa: return value * (1 + 0.15 * u);  // Bryan factor
+        case ParamId::r3:
+        case ParamId::ratio: return value * (1 + 0.01 * u);   // shape, arching
+        case ParamId::Count: return u * 3.14159265358979 / 4;  // principal-axis angle, +-45 deg
+        default: return value;
+    }
+}
+
 void Synth::make(Voice& v, int midi) {
     const Store& store = inst_ == Instrument::Glass ? glassP_ : barP_;
     v.kind = kindFor(inst_);
     if (v.kind == Voice::Kind::Bowl) v.bowl = BowlPhysics(sr_);
     else v.bar = BarPhysics(sr_);
     for (std::size_t i = 0; i < kNumParams; ++i)
-        if (store.has.test(i)) v.set(static_cast<ParamId>(i), store.value[i]);
+        if (store.has.test(i)) v.set(static_cast<ParamId>(i), vary(midi, static_cast<ParamId>(i), store.value[i]));
     const double spread = (midi - 72) / 24.0 * 0.5;
     const auto listenIdx = static_cast<std::size_t>(ParamId::listen);
     const double baseListen = store.has.test(listenIdx) ? store.value[listenIdx] : 0.0;
-    v.set(ParamId::f0, 440 * std::pow(2.0, (midi - 69) / 12.0));
+    v.set(ParamId::f0, vary(midi, ParamId::f0, 440 * std::pow(2.0, (midi - 69) / 12.0)));
     v.set(ParamId::listen, baseListen + spread);
     if (v.kind == Voice::Kind::Bowl) {
         v.bowl.setNyquistGuard(nyquistGuard_);
         if (scaleModalMass_) v.bowl.setModalMass(0.02 * std::pow(2.0, (72 - midi) / 12.0));
+        if (revBSizes_) v.bowl.setRimRadius(revBDiameterMm(midi) / 2000.0);
+        if (variation_ > 0) v.bowl.setAxisAngle(vary(midi, ParamId::Count, 0.0));  // Count: the axis-angle slot
     } else {
         v.bar.setNyquistGuard(nyquistGuard_);
         if (scaleModalMass_) v.bar.setModalMass(0.2 * std::pow(2.0, (72 - midi) / 24.0));

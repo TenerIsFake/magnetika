@@ -55,6 +55,19 @@ public:
     // These two take effect from the next note; sounding notes keep what they had.
     void setScaleModalMass(bool on) { scaleModalMass_ = on; }
     void setNyquistGuard(bool on) { nyquistGuard_ = on; }
+    // 8. `revBSizes` (off by default): each bowl's rim radius from the rev B bowl
+    //    table (147 mm across at C4 to 73 mm at C6; outside it, x sqrt 2 per octave)
+    //    instead of the JS's 45 mm for all, so a big bowl's rim runs faster under
+    //    the finger at the same spindle speed. Takes effect from the next note.
+    void setRevBSizes(bool on) { revBSizes_ = on; }
+    static double revBDiameterMm(int midi);
+    // 9. Build variation (amount 0 by default = off): every bowl and bar differs a
+    //    little, as real ones do: tuning (+-3 c), Q (+-20 %), the A-B split (+-40 %),
+    //    principal-axis angle, Bryan factor (+-15 %), partial ratios (+-1 %), all
+    //    scaled by `amount` (0..1). SIMULATED, not measured: a fixed pattern drawn
+    //    from `serial`, so one instrument always sounds the same. Next note on.
+    void setVariation(std::uint32_t serial, double amount) { serial_ = serial; variation_ = amount; }
+    double vary(int midi, ParamId id, double value) const;  // a parameter as this note's bowl or bar has it
 
     void noteOn(int midi, double vel);
     void noteOff(int midi);
@@ -129,6 +142,9 @@ private:
     bool coilsArmed_ = false;
     bool scaleModalMass_ = false;
     bool nyquistGuard_ = true;
+    bool revBSizes_ = false;
+    std::uint32_t serial_ = 1;
+    double variation_ = 0;
     std::uint64_t tick_ = 0;
     std::uint32_t notes_ = 0;
 };

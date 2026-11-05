@@ -30,6 +30,9 @@ inline constexpr const char* massScaling = "massScaling";
 inline constexpr const char* spindleOn = "spindleOn";  // off = fixed bowls (engine spin 0)
 inline constexpr const char* mpe = "mpe";                // MIDI Polyphonic Expression on member channels
 inline constexpr const char* mpeBendRange = "mpeBendRange";  // semitones of a full member-channel bend
+inline constexpr const char* revBSizes = "revBSizes";    // bowls at their rev B rim sizes (wants ~0.5 rev/s)
+inline constexpr const char* serialNo = "serialNo";      // which simulated instrument (build variation pattern)
+inline constexpr const char* variation = "variation";    // how much its bowls and bars differ, 0..1
 inline constexpr const char* mpeGlide = "mpeGlide";  // glass: a long MPE bend slides the finger to the next bowl
 } // namespace id
 

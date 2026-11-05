@@ -169,11 +169,12 @@ private:
     int lowerMembers_ = 0, upperMembers_ = 0;  // switching MPE on with no zones gives a lower zone of 15
     float memberBendRange_ = 48;  // semitones of a full member bend (the parameter, or RPN 0)
     float lastMpeBendRangeParam_ = -1;
+    float lastBuild_[3] = {-1, -1, -1};  // rev B sizes, instrument No., variation
     float lastSlideInputs_[3] = {-1, -1, -1};  // spindle switch, spin, finger speed: slide depends on them
     bool mpeActive_ = false;
     float lastMpeParam_ = -1;
     std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr,
-                       *mpeGlideRaw_ = nullptr;
+                       *mpeGlideRaw_ = nullptr, *revBRaw_ = nullptr, *serialRaw_ = nullptr, *variationRaw_ = nullptr;
 
     // seqlock: odd while the audio thread writes, even when the copy is consistent
     std::atomic<std::uint32_t> dispSeq_{0};

@@ -32,6 +32,9 @@ MagnetikaProcessor::MagnetikaProcessor()
     fingerSpeedRaw_ = get("g_fingerSpeed");
     spinRaw_ = get("g_spin");
     mpeGlideRaw_ = get(id::mpeGlide);
+    revBRaw_ = get(id::revBSizes);
+    serialRaw_ = get(id::serialNo);
+    variationRaw_ = get(id::variation);
     rpnMsb_.fill(127);
     rpnLsb_.fill(127);
     startTimerHz(20);
@@ -103,6 +106,13 @@ void MagnetikaProcessor::applyParameters(bool force) {
     if (force || armed != lastArmed_) synth_->setCoilsArmed(armed > 0.5f);
     if (force || mass != lastMassScaling_) synth_->setScaleModalMass(mass > 0.5f);
     lastArmed_ = armed;
+    // the instrument as built: its bowl sizes and how its bowls and bars differ (next note on)
+    const float build[3] = {revBRaw_->load(), serialRaw_->load(), variationRaw_->load()};
+    if (force || !std::equal(build, build + 3, lastBuild_)) {
+        std::copy(build, build + 3, lastBuild_);
+        synth_->setRevBSizes(build[0] > 0.5f);
+        synth_->setVariation(static_cast<std::uint32_t>(build[1]), build[2]);
+    }
     lastMassScaling_ = mass;
 
     // Performance parameters: apply only the ones the user moved, so a value set
@@ -538,19 +548,22 @@ void MagnetikaProcessor::applySlide(int midi, float slide, bool atNoteOn) {
     }
     const double s = juce::jlimit(0.0, 1.0, static_cast<double>(slide));
     const bool centre = std::abs(s - 0.5) < 0.01;
+    // the limits were measured on the 45 mm bowl; what the glass tolerates is a rim
+    // speed, so a bigger bowl reaches it at a lower angular speed
+    const double k = revBRaw_->load() > 0.5f ? 45.0 / (Synth::revBDiameterMm(midi) / 2.0) : 1.0;
     // the same test the engine makes: a turning spindle, or a fixed bowl (spin <= 0.05)
     const double spin = spinRaw_->load();
     if (spindleOnRaw_->load() > 0.5f && spin > 0.05) {
         // spindle running: the finger moves with the glass (slower rub, quieter) or
         // against it (faster, louder), never past 5 rad/s relative unless the spindle
         // alone already is; centre is a still finger
-        const double Om = 2 * kPi * spin, top = std::max(Om, 5.0);
+        const double Om = 2 * kPi * spin, top = std::max(Om, 5.0 * k);
         const double rel = centre ? Om : s < 0.5 ? Om * (0.08 + 0.92 * s / 0.5) : Om + (top - Om) * (s - 0.5) / 0.5;
         synth_->setNoteFingerSpeed(midi, Om - rel);  // the engine rubs at |finger - rim|
     } else {
         // fixed bowl: bottom = a still finger (silent), centre = the finger-speed
         // setting, top = 4.5 rad/s, the loudest speed before any note stops speaking
-        const double fs = fingerSpeedRaw_->load(), top = std::max(fs, 4.5);
+        const double fs = fingerSpeedRaw_->load(), top = std::max(fs, 4.5 * k);
         synth_->setNoteFingerSpeed(midi, centre ? fs : s < 0.5 ? fs * s / 0.5 : fs + (top - fs) * (s - 0.5) / 0.5);
     }
 }

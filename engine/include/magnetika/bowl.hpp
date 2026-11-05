@@ -50,6 +50,12 @@ public:
     // fast the finger travels along the rim, rad/s. On a stopped spindle a still
     // finger (0) does not excite the bowl, so a touch screen can make the player rub.
     void setTouch(double t) { touch_ = t; }
+    // Rim radius in metres: the rim speed under the finger is (finger - spindle) x R.
+    void setRimRadius(double m) { R_ = m; }
+    double rimRadius() const { return R_; }
+    // Where the (2,0) principal axes start relative to the finger, radians: a
+    // property of each real bowl (its wall-thickness variation).
+    void setAxisAngle(double rad) { alpha_ = rad; }
     // The finger load a strike of velocity `vel` gives (the JS velScale).
     static double velocityLoad(double vel) { return 0.4 + 0.8 * vel; }
     // Sets this note's finger load outright, in the same units as velocityLoad,
@@ -87,7 +93,8 @@ private:
     bool on_ = false, moving_ = false;
     double psi_, env_ = 0, noiseLP_ = 0, alpha_ = 0, venv_ = 0, t_ = 0;
     double velScale_ = 0;  // JS: undefined until the first noteOn; `velScale||1`
-    static constexpr double R_ = 0.045, mu_k_ = 0.35;
+    static constexpr double mu_k_ = 0.35;
+    double R_ = 0.045;  // rim radius, m (the JS fixes 45 mm for every bowl)
     double m_ = 0.02;
     double Ft_ = 0, vrel_ = 0;
     double damp_ = 0;  // damper engagement 0..1, ramps in after release

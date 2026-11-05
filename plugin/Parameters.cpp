@@ -109,6 +109,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(std::make_unique<APB>(juce::ParameterID{id::coilsArmed, 1}, "Coils always armed", true));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::massScaling, 1}, "Modal-mass scaling", false));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::spindleOn, 1}, "Spindle running", true));
+    layout.add(std::make_unique<APB>(juce::ParameterID{id::revBSizes, 1}, "Rev B bowl sizes", false));
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{id::serialNo, 1}, "Instrument No.", 1, 999, 1));
+    layout.add(fl(id::variation, "Build variation", linear(0, 1, 0.01f), 0.5f));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::mpe, 1}, "MPE", false));
     layout.add(fl(id::mpeBendRange, "MPE bend range", linear(1, 96, 1), 48, "st"));
     layout.add(std::make_unique<APB>(juce::ParameterID{id::mpeGlide, 1}, "MPE glide across bowls", true));

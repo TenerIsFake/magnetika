@@ -549,6 +549,61 @@ void testNoteLoad() {
     CHECK(soft > softFree + 6, "load 1.6 on a soft strike should make it speak (%.1f vs %.1f dB)", soft, softFree);
 }
 
+void testRevBSizes() {
+    CHECK(Synth::revBDiameterMm(60) == 147 && Synth::revBDiameterMm(72) == 104 && Synth::revBDiameterMm(84) == 73,
+          "rev B table not read: C4 %.1f C5 %.1f C6 %.1f", Synth::revBDiameterMm(60), Synth::revBDiameterMm(72),
+          Synth::revBDiameterMm(84));
+    CHECK(std::fabs(Synth::revBDiameterMm(48) - 104 * std::sqrt(2.0) * std::sqrt(2.0)) < 0.01,
+          "below the table the size should grow by sqrt 2 per octave: C3 %.2f", Synth::revBDiameterMm(48));
+    // a big bowl's rim runs faster: at 1 rev/s the C4 bowl (73.5 mm radius, 0.46 m/s)
+    // is past where this friction model's stick-slip holds; at 45 mm (0.28 m/s) it speaks
+    auto c4 = [](bool revB) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setCoilsArmed(true);
+        s.setRevBSizes(revB);
+        s.noteOn(60, 0.8);
+        return runBlocks(s, 2.5, [](int) {}).energyDb(1.5, 2.5);
+    };
+    const double small = c4(false), revB = c4(true);
+    CHECK(small > revB + 12, "rev B size did not change how C4 speaks at 1 rev/s: %.1f vs %.1f dB", small, revB);
+}
+
+void testBuildVariation() {
+    Synth off(SR);
+    CHECK(off.vary(72, ParamId::Q2, 3500) == 3500, "variation must be off by default");
+    Synth s(SR);
+    s.setVariation(7, 1.0);
+    double minC = 1e9, maxC = -1e9;
+    bool qOk = true, splitOk = true, angleOk = true;
+    for (int m = 36; m <= 96; ++m) {
+        const double f = 440 * std::pow(2.0, (m - 69) / 12.0);
+        const double c = 1200 * std::log2(s.vary(m, ParamId::f0, f) / f);
+        minC = std::min(minC, c);
+        maxC = std::max(maxC, c);
+        qOk = qOk && std::fabs(s.vary(m, ParamId::Q2, 1000) / 1000 - 1) <= 0.2 + 1e-12;
+        splitOk = splitOk && std::fabs(s.vary(m, ParamId::split, 1) - 1) <= 0.4 + 1e-12;
+        angleOk = angleOk && std::fabs(s.vary(m, ParamId::Count, 0)) <= 3.14159265358979 / 4 + 1e-12;
+        CHECK(s.vary(m, ParamId::N, 2.5) == 2.5, "finger load is the player's, not the bowl's: varied at %d", m);
+    }
+    CHECK(minC >= -3 && maxC <= 3 && maxC - minC > 2, "tuning spread should stay within +-3 c and use it: %.2f..%.2f", minC, maxC);
+    CHECK(qOk && splitOk && angleOk, "a varied parameter left its range");
+    Synth t(SR);
+    t.setVariation(8, 1.0);
+    CHECK(t.vary(72, ParamId::Q2, 1000) != s.vary(72, ParamId::Q2, 1000), "two instrument numbers gave the same bowl");
+    // one instrument always sounds the same
+    auto render = [](std::uint32_t serial) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setVariation(serial, 1.0);
+        s.noteOn(72, 0.8);
+        return runBlocks(s, 0.5, [](int) {});
+    };
+    const Stereo a = render(7), b = render(7), c = render(8);
+    CHECK(a.L == b.L, "the same instrument number rendered differently");
+    CHECK(a.L != c.L, "a different instrument number rendered the same");
+}
+
 void testStillFingerOnStoppedSpindleStopsExciting() {
     // Spindle stopped: the finger must travel along the rim to excite the bowl.
     // One finger keeps rubbing; the other stops at 0.5 s and the note must fade.
@@ -647,6 +702,8 @@ int main() {
     testTouchScalesTheFinger();
     testNoteBend();
     testNoteLoad();
+    testRevBSizes();
+    testBuildVariation();
     testStillFingerOnStoppedSpindleStopsExciting();
     testPatternAngleFollowsTheDrive();
     testSnapshotReportsVoices();

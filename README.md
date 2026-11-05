@@ -29,7 +29,7 @@ for both maths libraries.
 | 2 | JUCE VST3 + Standalone: CC map, parameters, 16 voices, material picker | done |
 | 3 | The instrument editor: play view (oblique 3-D, touch) and modify view (cut-away, faceplate) | done |
 | 4 | MPE: per-note bend, pressure and slide; MPE configuration messages | done |
-| 5 | Per-bowl tuning from the rev B table (each bowl and bar slightly different, as real ones are) | |
+| 5 | The instrument as built: rev B bowl sizes, simulated build variation per bowl and bar | done |
 | later | `.scl` microtuning | |
 
 ## Layout
@@ -78,7 +78,24 @@ On Linux the plugin is off by default (`-DMAGNETIKA_PLUGIN=ON` needs JUCE's X11/
 the engine and its tests build everywhere.
 
 Plugin defaults depart from the reference player: coils always armed, a 1.5 s glass damper and a
-2.5 s bar damper, and 16 voices instead of 8. Validated with pluginval at strictness 10.
+2.5 s bar damper, 16 voices instead of 8, and a build variation of 0.5. Validated with pluginval
+at strictness 10.
+
+### The instrument as built
+
+- **Build variation** (0–1, default 0.5) and **Instrument No.** (1–999): every bowl and bar
+  differs a little, as real ones do: tuning (±3 ¢ at full variation), Q (±20 %), the A–B split
+  (±40 %), the principal-axis angle (±45°), the Bryan factor (±15 %), the partial ratios (±1 %).
+  This is *simulated*, not measured: rev B lists only each bowl's pitch, size and mass, and leaves
+  these values to a calibration routine on the finished hardware. The pattern is fixed by the
+  instrument number, so one instrument always sounds the same; changes apply from the next note.
+- **Rev B bowl sizes** (off by default): each bowl's rim at its rev B diameter (147 mm across at
+  C4 to 73 mm at C6, √2 per octave beyond) instead of 90 mm for all, so a big bowl's rim runs
+  faster under the finger. In this friction model the stick-slip stops holding past about
+  0.35 m/s of rim speed, so at the default 1 rev/s the bowls below about G4 stop speaking. Play
+  rev B sizes at about **0.5 rev/s**, where every bowl speaks and the registers are more even
+  (C3 −21 dB to C6 −13 dB, against −28 to −10 dB at 90 mm). MPE slide limits scale with each
+  bowl's radius.
 
 On a machine with little free memory, build JUCE with `-- /m:1 /p:CL_MPCount=2` (one project at
 a time, two compiler processes, about 3 GB).
