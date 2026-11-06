@@ -33,7 +33,9 @@ public:
     bool load(const juce::String& name, juce::AudioProcessorValueTreeState& st) const {
         const auto xml = juce::XmlDocument::parse(dir_.getChildFile(name + ".magnetika"));
         if (xml == nullptr || !xml->hasTagName(st.state.getType())) return false;
-        st.replaceState(juce::ValueTree::fromXml(*xml));
+        auto state = juce::ValueTree::fromXml(*xml);
+        upgradeState(state);  // older presets keep their sound
+        st.replaceState(state);
         return true;
     }
 

@@ -37,6 +37,8 @@ void BowlParams::set(ParamId id, double v) {
         case ParamId::bend: bend = v; break;
         case ParamId::pressure: pressure = v; break;
         case ParamId::damperT60: damperT60 = v; break;
+        case ParamId::sustainT60: sustainT60 = v; break;
+        case ParamId::coilStart: coilStart = v; break;
         default: break;  // bar-only
     }
 }
@@ -65,6 +67,10 @@ void BowlPhysics::noteOn(double vel) {
     velScale_ = velocityLoad(vel);
     touch_ = 1.0;  // a new strike starts at full finger load; a touch screen sets it after noteOn
     noteBend_ = 0;  // likewise, no per-note bend carries into the next note
+    relT_ = 0;
+    // coil start: a velocity-scaled burst through the coils (see step); 0 = off, as the JS
+    startT_ = p.coilStart > 0 ? 0.0 : -1.0;
+    startF_ = p.coilStart * vel;
     psi_ = thF_;
     // Nyquist guard, decided once per note so a mode never pops in or out. The
     // 5 % margin covers pitch bend (+40 c) and vibrato on top of the note.
@@ -75,6 +81,8 @@ void BowlPhysics::noteOn(double vel) {
 
 void BowlPhysics::noteOff() {
     on_ = false;
+    relT_ = 0;
+    startT_ = -1;
     moving_ = false;
     omF_ = 0;
 }
@@ -134,7 +142,15 @@ void BowlPhysics::step() {
         const double vpsi = v[0] * cp + v[1] * sp;
         const double av = std::fabs(vpsi);
         venv_ = av > venv_ ? av : venv_ * (1 - dt * 30);
-        const double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / P.vset)) : P.G;
+        // Sustain fade (not in the JS): once the finger has lifted, the regulator's
+        // setpoint decays to -60 dB over sustainT60, so the coils let a released note
+        // fade instead of holding it forever. A note still held keeps full sustain.
+        double vset = P.vset;
+        if (P.sustainT60 > 0 && !on_ && P.G > 0) {
+            relT_ += dt;
+            vset *= std::exp(-6.907755278982137 * relT_ / P.sustainT60);
+        }
+        const double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / vset)) : P.G;
         if (P.G > 0) {
             const double Fd = P.Fmax * std::tanh(geff * vpsi / P.Fmax);
             FA = Fd * cp;
@@ -157,6 +173,24 @@ void BowlPhysics::step() {
                 const double F3 = 0.7 * P.Fmax * std::tanh(-P.G * v3m / (0.7 * P.Fmax));
                 F3A = -F3 * v[2] / v3m;
                 F3B = -F3 * v[3] / v3m;
+            }
+        }
+        // Coil start (not in the JS): rev B's coil-started notes. For up to 120 ms
+        // after note-on the coils drive the (2,0) mode at its frequency along the
+        // finger's axis, so the bowl is already moving when the rub takes over
+        // (from rest the stick-slip needs 0.7-1.4 s to build). Velocity-scaled,
+        // smooth (sin^2) so it does not click, and stopped once the mode is at half
+        // the sustain setpoint.
+        if (startT_ >= 0) {
+            constexpr double kBurst = 0.12;
+            if (startT_ < kBurst && venv_ < 0.5 * P.vset) {
+                const double e = std::sin(PI * startT_ / kBurst);
+                const double Fs = startF_ * e * e * std::cos(w0 * startT_);
+                FA += Fs * cp;
+                FB += Fs * sp;
+                startT_ += dt;
+            } else {
+                startT_ = -1;
             }
         }
         // electronic spring: vibrato + pitch bend

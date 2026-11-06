@@ -56,6 +56,11 @@ inline constexpr const char* barsBrakeGain = "b_Gb";
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
+// A state or preset saved before a parameter existed would load it at its default.
+// For build variation that would change how old material sounds (it played as 0),
+// so a state without it gets 0. Call on a tree before replaceState.
+void upgradeState(juce::ValueTree& state);
+
 // Glass materials from the original single-bowl simulation. Selecting one sets
 // Q2, Q3 and the A-B split, exactly as the player's material chips do.
 struct Material {

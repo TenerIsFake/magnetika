@@ -604,6 +604,68 @@ void testBuildVariation() {
     CHECK(a.L != c.L, "a different instrument number rendered the same");
 }
 
+void testCoilStart() {
+    // from rest the stick-slip takes about a second to build at 1 rev/s; a coil burst
+    // at note-on has the bowl audible within ~0.1 s, and leaves the steady tone alone
+    auto run = [](double coilStart) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setCoilsArmed(true);
+        const ParamValue cs[] = {{ParamId::coilStart, coilStart}};
+        s.setParams(Instrument::Glass, cs, 1);
+        s.noteOn(72, 0.8);
+        return runBlocks(s, 3.0, [](int) {});
+    };
+    const Stereo off = run(0), on = run(0.1);
+    const double steadyOff = off.energyDb(2.0, 3.0), steadyOn = on.energyDb(2.0, 3.0);
+    auto audibleAt = [](const Stereo& r, double steady) {
+        for (double t = 0; t < 2.5; t += 0.005)
+            if (r.energyDb(t, t + 0.02) > steady - 20) return t + 0.02;
+        return 9.0;
+    };
+    const double tOff = audibleAt(off, steadyOff), tOn = audibleAt(on, steadyOn);
+    CHECK(tOn < 0.2, "coil start: C5 not audible until %.3f s", tOn);
+    CHECK(tOff > 0.6, "without coil start C5 should take its time (%.3f s): the test lost its baseline", tOff);
+    CHECK(std::fabs(steadyOn - steadyOff) < 2, "coil start changed the steady tone: %.1f vs %.1f dB", steadyOn, steadyOff);
+    // and it needs the coils: unarmed, no pedal, there is nothing to drive them
+    Synth u(SR);
+    playerDefaults(u);
+    const ParamValue cs[] = {{ParamId::coilStart, 0.1}};
+    u.setParams(Instrument::Glass, cs, 1);
+    u.noteOn(72, 0.8);
+    const Stereo unarmed = runBlocks(u, 0.5, [](int) {});
+    Synth r(SR);
+    playerDefaults(r);
+    r.noteOn(72, 0.8);
+    const Stereo ref = runBlocks(r, 0.5, [](int) {});
+    CHECK(unarmed.L == ref.L, "coil start drove a bowl with the coils off");
+}
+
+void testSustainFade() {
+    // sustain pedal down, note released at 1 s: held forever with fade 0 (the JS),
+    // gone 60 dB in sustainT60 seconds otherwise
+    auto run = [](Instrument inst, double t60) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setInst(inst);
+        s.setCoilsArmed(true);
+        const PerfValue sus[] = {{PerfId::sustain, 1}};
+        s.setPerf(sus, 1);
+        const ParamValue f[] = {{ParamId::sustainT60, t60}};
+        s.setParams(inst, f, 1);
+        s.noteOn(72, 0.8);
+        return runBlocks(s, 5.0, [&](int b) { if (b == blockAt(1.0)) s.noteOff(72); });
+    };
+    for (Instrument inst : {Instrument::Glass, Instrument::Bars}) {
+        const char* name = inst == Instrument::Glass ? "glass" : "bars";
+        const Stereo hold = run(inst, 0), fade = run(inst, 3.0);
+        const double holdDrop = hold.energyDb(1.5, 2.0) - hold.energyDb(4.5, 5.0);
+        const double fadeDrop = fade.energyDb(1.5, 2.0) - fade.energyDb(4.5, 5.0);
+        CHECK(std::fabs(holdDrop) < 3, "%s: with fade 0 the pedal should hold the note (dropped %.1f dB)", name, holdDrop);
+        CHECK(fadeDrop > 40, "%s: a 3 s sustain fade dropped only %.1f dB in 3 s", name, fadeDrop);
+    }
+}
+
 void testStillFingerOnStoppedSpindleStopsExciting() {
     // Spindle stopped: the finger must travel along the rim to excite the bowl.
     // One finger keeps rubbing; the other stops at 0.5 s and the note must fade.
@@ -704,6 +766,8 @@ int main() {
     testNoteLoad();
     testRevBSizes();
     testBuildVariation();
+    testCoilStart();
+    testSustainFade();
     testStillFingerOnStoppedSpindleStopsExciting();
     testPatternAngleFollowsTheDrive();
     testSnapshotReportsVoices();

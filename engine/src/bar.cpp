@@ -32,6 +32,7 @@ void BarParams::set(ParamId id, double v) {
         case ParamId::bend: bend = v; break;
         case ParamId::pressure: pressure = v; break;
         case ParamId::damperT60: damperT60 = v; break;
+        case ParamId::sustainT60: sustainT60 = v; break;
         default: break;  // glass-only
     }
 }
@@ -50,6 +51,7 @@ void BarPhysics::noteOn(double vel) {
     st_ = 0;
     sv_ = vel;
     on_ = true;
+    relT_ = 0;
     noteBend_ = 0;
     // Nyquist guard for the 4x partial; see BowlPhysics::noteOn.
     keep2_ = !nyquistGuard_ || p.f0 * p.ratio < 0.5 * sr_ / 1.05;
@@ -85,7 +87,12 @@ void BarPhysics::step() {
     if (P.driveOn != 0) {
         const double av = std::fabs(v[0]);
         venv_ = av > venv_ ? av : venv_ * (1 - dt * 30);
-        const double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / P.vset)) : P.G;
+        double vset = P.vset;  // sustain fade, as BowlPhysics
+        if (P.sustainT60 > 0 && !on_ && P.G > 0) {
+            relT_ += dt;
+            vset *= std::exp(-6.907755278982137 * relT_ / P.sustainT60);
+        }
+        const double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / vset)) : P.G;
         D1 = P.Fmax * std::tanh(geff * v[0] / P.Fmax);
         if (P.coil2 != 0) D2 = 0.5 * P.Fmax * std::tanh(geff * v[1] / (0.5 * P.Fmax));
         t_ += dt;

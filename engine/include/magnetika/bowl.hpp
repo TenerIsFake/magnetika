@@ -18,6 +18,7 @@ struct BowlParams {
            Fvib = 0.3, trim = 0, n3ctl = 0;
     double spin = 1, kappa = 0.35, listen = 0, master = 0.6, bend = 0, pressure = 1;
     double damperT60 = 0;  // not in the JS; 0 = off
+    double sustainT60 = 0, coilStart = 0;  // not in the JS; 0 = off (see ParamId)
 
     // Applies the ids a bowl has; others (bar-only) are ignored, as Object.assign
     // stores them unused in the JS.
@@ -98,6 +99,8 @@ private:
     double m_ = 0.02;
     double Ft_ = 0, vrel_ = 0;
     double damp_ = 0;  // damper engagement 0..1, ramps in after release
+    double relT_ = 0;  // seconds since the finger lifted (sustain fade)
+    double startT_ = -1, startF_ = 0;  // coil start: time into the burst (-1 = none), its force
     double touch_ = 1.0;
     double noteBend_ = 0;  // cents
     double patS1_ = 0, patS2_ = 0, pattern_ = 0;

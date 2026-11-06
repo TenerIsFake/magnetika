@@ -9,7 +9,7 @@ constexpr std::array<std::string_view, kNumParams> kNames = {
     "f0", "driveOn", "G", "Fmax", "vset", "vibDepth", "vibRate", "Fvib", "listen", "master", "bend", "pressure",
     "Q2", "split", "r3", "Q3", "N", "dmu", "vs", "breath", "fingerSpeed", "rot", "trim", "n3ctl", "spin", "kappa",
     "Q1", "ratio", "strikeF", "contact", "strikePos", "coil2",
-    "damperT60",
+    "damperT60", "sustainT60", "coilStart",
 };
 constexpr std::array<std::string_view, static_cast<std::size_t>(PerfId::Count)> kPerfNames = {
     "sustain", "brake", "Gs", "Gb",

@@ -629,6 +629,7 @@ void MagnetikaProcessor::setStateInformation(const void* data, int sizeInBytes) 
     if (auto xml = getXmlFromBinary(data, sizeInBytes))
         if (xml->hasTagName(apvts_.state.getType())) {
             auto state = juce::ValueTree::fromXml(*xml);
+            upgradeState(state);  // older projects keep their sound
             if (state.hasProperty("mpeZones")) pendingZones_.store(juce::jlimit(0, 255, static_cast<int>(state["mpeZones"])));
             apvts_.replaceState(state);
         }

@@ -23,6 +23,8 @@ enum class ParamId : unsigned char {
     Q1, ratio, strikeF, contact, strikePos, coil2,
     // plugin additions (not in the JS reference; 0 = off = reference behaviour)
     damperT60,  // seconds: dry-finger / damper-bar tail after release, 0 = off
+    sustainT60, // seconds: under the sustain pedal, a released note fades to -60 dB; 0 = held forever (JS)
+    coilStart,  // N: glass, a coil burst at the bowl's frequency at note-on to start it; 0 = off (JS)
     Count
 };
 

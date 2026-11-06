@@ -73,6 +73,8 @@ const std::vector<EngineMapping>& engineMappings() {
         {"g_listen", I::Glass, P::listen, true},
         {"g_master", I::Glass, P::master, false},
         {"g_damper", I::Glass, P::damperT60, false},
+        {"g_coilStart", I::Glass, P::coilStart, false},
+        {"sustainFade", I::Glass, P::sustainT60, false},
         // bars
         {"b_Q1", I::Bars, P::Q1, false},
         {"b_Q2", I::Bars, P::Q2, false},
@@ -87,8 +89,18 @@ const std::vector<EngineMapping>& engineMappings() {
         {"b_listen", I::Bars, P::listen, true},
         {"b_master", I::Bars, P::master, false},
         {"b_damper", I::Bars, P::damperT60, false},
+        {"sustainFade", I::Bars, P::sustainT60, false},
     };
     return m;
+}
+
+void upgradeState(juce::ValueTree& state) {
+    if (!state.getChildWithProperty("id", id::variation).isValid()) {
+        juce::ValueTree p("PARAM");
+        p.setProperty("id", id::variation, nullptr);
+        p.setProperty("value", 0.0f, nullptr);
+        state.appendChild(p, nullptr);
+    }
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
@@ -137,6 +149,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(fl("g_listen", "Glass ear angle", linear(-180, 180, 1), 0, "deg"));
     layout.add(fl("g_master", "Glass level", linear(0, 1, 0.01f), 0.6f));
     layout.add(fl("g_damper", "Glass damper (tail, 0 = off)", linear(0, 10, 0.05f), 1.5f, "s"));
+    layout.add(fl("g_coilStart", "Glass coil start (0 = off)", linear(0, 0.3f, 0.005f), 0.1f, "N"));
 
     // ---- bars (player BARS spec)
     layout.add(fl("b_Q1", "Bar fundamental Q", logRange(200, 20000), 2500));
@@ -154,6 +167,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(fl("b_listen", "Bar pan", linear(-90, 90, 1), 0, "deg"));
     layout.add(fl("b_master", "Bar level", linear(0, 1, 0.01f), 0.6f));
     layout.add(fl("b_damper", "Bar damper (tail, 0 = off)", linear(0, 10, 0.05f), 2.5f, "s"));
+    layout.add(fl("sustainFade", "Sustain fade (released notes, 0 = hold)", linear(0, 30, 0.1f), 6.0f, "s"));
 
     return layout;
 }

@@ -11,6 +11,7 @@ struct BarParams {
     double driveOn = 0, G = 0.8, Fmax = 0.5, vset = 0.2, vibDepth = 0, vibRate = 5.5, Fvib = 0.5, coil2 = 0;
     double listen = 0, master = 0.6, bend = 0, pressure = 1;
     double damperT60 = 0;  // not in the JS; 0 = off
+    double sustainT60 = 0;  // not in the JS; 0 = held forever
 
     void set(ParamId id, double v);  // glass-only ids are ignored
     double get(ParamId id) const;
@@ -30,7 +31,10 @@ public:
     // Per-note pitch bend in cents (MPE), as BowlPhysics::setNoteBend. Reset by noteOn.
     void setNoteBend(double cents) { noteBend_ = cents; }
     void noteOn(double vel);
-    void noteOff() { on_ = false; }
+    void noteOff() {
+        on_ = false;
+        relT_ = 0;
+    }
     void kick(double vel) { noteOn(vel); }
     void silence();
 
@@ -51,6 +55,7 @@ private:
     double env_ = 0, venv_ = 0, t_ = 0, st_ = -1, sv_ = 0;
     bool on_ = false;
     double damp_ = 0;
+    double relT_ = 0;  // seconds since release (sustain fade)
     double noteBend_ = 0;  // cents
     bool nyquistGuard_ = true, keep2_ = true;
 };

@@ -501,7 +501,7 @@ void AdvancedPanel::resized() {
 ModifyPage::ModifyPage(MagnetikaProcessor& p, std::function<void()> onDone)
     : proc_(p), cutaway_(p),
       glassPlate_(p,
-                  {{id::sustain, "SUSTAIN"}, {id::brake, "BRAKE"}, {id::coilsArmed, "ARMED"}, {id::trimOn, "TRIM"}, {id::n3ctl, "(3,0)"}},
+                  {{id::sustain, "SUSTAIN"}, {id::brake, "BRAKE"}, {id::coilsArmed, "ARMED"}, {id::trimOn, "TRIM"}, {id::n3ctl, "(3,0)"}, {id::revBSizes, "REV B"}},
                   {{"COILS", {{"g_G", "SUSTAIN"}, {"g_Gb", "BRAKE"}, {"g_Fmax", "FORCE"}, {"g_vset", "SETPOINT"}}},
                    {juce::CharPointer_UTF8("SPRING \xc2\xb7 SPIN"), {{id::vibDepth, "VIBRATO"}, {"g_vibRate", "RATE"}, {id::rotation, "ROTATION"}, {"g_kappa", "BRYAN"}}},
                    {juce::CharPointer_UTF8("FINGER \xc2\xb7 TAIL"), {{"g_N", "LOAD"}, {"g_dmu", "WETNESS"}, {"g_spin", "SPINDLE"}, {"g_damper", "DAMPER"}}}}),
@@ -522,6 +522,19 @@ ModifyPage::ModifyPage(MagnetikaProcessor& p, std::function<void()> onDone)
     doneBtn_.setToggleState(true, juce::dontSendNotification);  // brass, like a selected segment
     doneBtn_.onClick = std::move(onDone);
     addAndMakeVisible(doneBtn_);
+    serialDown_.onClick = [this] { stepSerial(-1); };
+    serialUp_.onClick = [this] { stepSerial(+1); };
+    serialDown_.setTooltip("Previous instrument: another pattern of build variation");
+    serialUp_.setTooltip("Next instrument: another pattern of build variation");
+    addAndMakeVisible(serialDown_);
+    addAndMakeVisible(serialUp_);
+    variationKnob_.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+    variationKnob_.setTitle("Build variation");
+    variationKnob_.setTooltip("Build variation: how much this instrument's bowls and bars differ from the drawings "
+                              "(tuning, Q, split, axis angle). Simulated, fixed per instrument number.");
+    variationAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.state(), id::variation, variationKnob_);
+    variationKnob_.onValueChange = [this] { repaint(buildWell_.toNearestInt()); };
+    addAndMakeVisible(variationKnob_);
     addAndMakeVisible(cutaway_);
     addAndMakeVisible(glassPlate_);
     addChildComponent(barsPlate_);
@@ -546,6 +559,23 @@ void ModifyPage::setInstrument(int i) {
         prm->setValueNotifyingHost(prm->convertTo0to1(static_cast<float>(i)));
         prm->endChangeGesture();
     }
+}
+
+void ModifyPage::stepSerial(int delta) {
+    if (auto* prm = proc_.state().getParameter(id::serialNo)) {
+        const int now = static_cast<int>(proc_.state().getRawParameterValue(id::serialNo)->load());
+        const int next = (now - 1 + delta + 999) % 999 + 1;  // 1..999, wrapping
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost(prm->convertTo0to1(static_cast<float>(next)));
+        prm->endChangeGesture();
+    }
+    repaint(buildWell_.toNearestInt());
+}
+
+bool ModifyPage::revBHint() const {
+    auto& st = proc_.state();
+    return instrument() == 0 && st.getRawParameterValue(id::revBSizes)->load() > 0.5f &&
+           st.getRawParameterValue(id::spindleOn)->load() > 0.5f && st.getRawParameterValue("g_spin")->load() > 0.6f;
 }
 
 void ModifyPage::paint(juce::Graphics& g) {
@@ -573,6 +603,31 @@ void ModifyPage::paint(juce::Graphics& g) {
     g.setColour(theme::inkFaint);
     g.drawText("VOICES", info.removeFromLeft(56), juce::Justification::centredLeft);
     theme::drawReadout(g, juce::String(d_.count) + " / 16", info.removeFromLeft(76).reduced(0, 9), 12.5f);
+
+    // the instrument as built
+    theme::drawWell(g, buildWell_);
+    {
+        auto b = buildWell_.reduced(10, 0);
+        g.setColour(theme::inkFaint);
+        g.setFont(theme::sans(11.0f).withExtraKerningFactor(0.16f));
+        g.drawText("No.", b.removeFromLeft(22), juce::Justification::centredLeft);
+        b.removeFromLeft(24);  // the down button
+        const int serial = static_cast<int>(proc_.state().getRawParameterValue(id::serialNo)->load());
+        theme::drawReadout(g, juce::String(serial).paddedLeft('0', 3), b.removeFromLeft(44).reduced(0, 9), 12.5f);
+        b.removeFromLeft(24 + 6);  // the up button, a gap
+        b.removeFromLeft(36);      // the knob
+        g.setColour(theme::amberText);
+        g.setFont(theme::mono(11.0f));
+        g.drawText("VAR " + juce::String(juce::roundToInt(variationKnob_.getValue() * 100)) + "%", b,
+                   juce::Justification::centredLeft);
+    }
+    if (revBHint()) {  // rev B sizes: the big bowls' rims outrun this friction model above ~0.6 rev/s
+        g.setColour(theme::amberText);
+        g.setFont(theme::sans(11.5f, true).withExtraKerningFactor(0.06f));
+        g.drawText(juce::String::fromUTF8("REV B SIZES: the low bowls speak only below \xe2\x89\x88 0.6 rev/s (spindle now ") +
+                       juce::String(proc_.state().getRawParameterValue("g_spin")->load(), 2) + ")",
+                   juce::Rectangle<float>(24, 56, 640, 18), juce::Justification::centredLeft);
+    }
 
     // pedals
     const bool lit[] = {d_.sustain, d_.brake, glass ? proc_.state().getRawParameterValue(id::spindleOn)->load() > 0.5f : false};
@@ -623,6 +678,10 @@ void ModifyPage::resized() {
     glassBtn_.setBounds(246, 14, 70, 36);
     barsBtn_.setBounds(320, 14, 66, 36);
     infoWell_ = {640, 12, 432, 40};
+    buildWell_ = {398, 12, 232, 40};
+    serialDown_.setBounds(430, 18, 24, 28);
+    serialUp_.setBounds(498, 18, 24, 28);
+    variationKnob_.setBounds(528, 14, 36, 36);
     doneBtn_.setBounds(1088, 10, 92, 44);
     cutaway_.setBounds(24, 76, 640, 560);
     glassPlate_.setBounds(688, 76, 488, 560);
@@ -644,6 +703,8 @@ void ModifyPage::timerCallback() {
     glassPlate_.setVisible(glass);
     barsPlate_.setVisible(!glass);
     repaint(infoWell_.toNearestInt());
+    repaint(buildWell_.toNearestInt());
+    repaint(juce::Rectangle<int>(24, 56, 640, 18));  // the rev B hint
     repaint(pedals_.toNearestInt());
     repaint(meters_.toNearestInt());
 }

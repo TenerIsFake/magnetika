@@ -81,6 +81,21 @@ Plugin defaults depart from the reference player: coils always armed, a 1.5 s gl
 2.5 s bar damper, 16 voices instead of 8, and a build variation of 0.5. Validated with pluginval
 at strictness 10.
 
+### Onset and sustain
+
+- **Coil start** (`Glass coil start`, default 0.1 N, 0 = off): from rest, the finger's stick-slip
+  needs 0.7–1.4 s at 1 rev/s before a bowl is even audible (higher bowls slowest). The rev B
+  design has coil-started notes, so at note-on the coils drive the bowl's (2,0) mode at its
+  frequency for up to 120 ms (velocity-scaled, smooth, stopped once the mode is at half the
+  sustain setpoint); the rub then takes over. Measured: audible in 0.075–0.09 s, −6 dB in about
+  0.4 s (0.15 s on a fixed bowl), steady tone unchanged. Needs the coils (armed, the default).
+  The burst rings like a soft strike and decays over the glass's long tail whatever the finger
+  then does.
+- **Sustain fade** (`Sustain fade`, default 6 s, 0 = hold): with the sustain pedal down, the
+  coils hold a note after the finger lifts. Held forever, every key played stays in the sound;
+  so the coils' setpoint for a released note decays to −60 dB over this time. Notes still held
+  keep full sustain. Both instruments.
+
 ### The instrument as built
 
 - **Build variation** (0–1, default 0.5) and **Instrument No.** (1–999): every bowl and bar
@@ -89,13 +104,16 @@ at strictness 10.
   This is *simulated*, not measured: rev B lists only each bowl's pitch, size and mass, and leaves
   these values to a calibration routine on the finished hardware. The pattern is fixed by the
   instrument number, so one instrument always sounds the same; changes apply from the next note.
+  Projects and presets saved before this setting existed load with variation 0, so they sound
+  as they did. Both are in the modify view's top bar (No. ‹ › and the VAR knob).
 - **Rev B bowl sizes** (off by default): each bowl's rim at its rev B diameter (147 mm across at
   C4 to 73 mm at C6, √2 per octave beyond) instead of 90 mm for all, so a big bowl's rim runs
   faster under the finger. In this friction model the stick-slip stops holding past about
   0.35 m/s of rim speed, so at the default 1 rev/s the bowls below about G4 stop speaking. Play
   rev B sizes at about **0.5 rev/s**, where every bowl speaks and the registers are more even
   (C3 −21 dB to C6 −13 dB, against −28 to −10 dB at 90 mm). MPE slide limits scale with each
-  bowl's radius.
+  bowl's radius. It is the REV B switch on the glass faceplate; both views show a reminder while
+  the spindle is too fast for it.
 
 On a machine with little free memory, build JUCE with `-- /m:1 /p:CL_MPCount=2` (one project at
 a time, two compiler processes, about 3 GB).

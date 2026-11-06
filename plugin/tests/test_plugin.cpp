@@ -459,6 +459,7 @@ void testMpePressureIsPerNote() {
     // the load), then one eased to a whisper: only that bowl stops speaking
     auto run = [](int p2, int p3) {
         MagnetikaProcessor p;
+        setParam(p, "g_coilStart", 0.0f);  // the finger's own physics: no coil-start ring
         mpeProcessor(p);
         playBlocks(p, 1, {juce::MidiMessage::noteOn(2, 72, 0.8f), juce::MidiMessage::noteOn(3, 79, 0.8f),
                           pressure(2, 127), pressure(3, 127)});
@@ -766,6 +767,7 @@ void testMpePressureLaw() {
     // the travel however hard the note was struck (velocity no longer moves it)
     auto level = [](float vel, int press) {
         MagnetikaProcessor p;
+        setParam(p, "g_coilStart", 0.0f);  // the finger alone
         mpeProcessor(p);
         playBlocks(p, 1, {M::noteOn(2, 72, vel), pressure(2, 127)});  // pressure takes over at once
         playBlocks(p, 470, {pressure(2, press)});
@@ -783,10 +785,12 @@ void testMpePressureLaw() {
           "39%% pressure sounds different after a soft and a hard strike (%.3g vs %.3g)", spoke[0], spoke[1]);
     // a hard strike with the controller's pressure still at 0 keeps the strike's load...
     MagnetikaProcessor a;
+    setParam(a, "g_coilStart", 0.0f);
     mpeProcessor(a);
     playBlocks(a, 470, {pressure(2, 0), M::noteOn(2, 72, 1.0f)});
     // ...until pressure overtakes it; from then on easing off goes down to a whisper
     MagnetikaProcessor b;
+    setParam(b, "g_coilStart", 0.0f);
     mpeProcessor(b);
     playBlocks(b, 1, {pressure(2, 0), M::noteOn(2, 72, 1.0f), pressure(2, 127)});
     playBlocks(b, 470, {pressure(2, 0)});
@@ -905,6 +909,28 @@ void testBuildParameters() {
     CHECK(render(1, 1, 0.5f, 60) != render(0, 1, 0.5f, 60), "Rev B bowl sizes had no effect on C4");
 }
 
+void testOldStateLoadsWithoutVariation() {
+    // a project saved before build variation existed must sound as it did (variation 0);
+    // one saved with it keeps its value
+    MagnetikaProcessor src;
+    setParam(src, "variation", 0.7f);
+    juce::MemoryBlock withIt;
+    src.getStateInformation(withIt);
+    auto xml = juce::AudioProcessor::getXmlFromBinary(withIt.getData(), static_cast<int>(withIt.getSize()));
+    CHECK(xml != nullptr, "state did not round-trip as XML");
+    if (xml == nullptr) return;
+    auto tree = juce::ValueTree::fromXml(*xml);
+    tree.removeChild(tree.getChildWithProperty("id", "variation"), nullptr);  // as an older version saved it
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary(*tree.createXml(), old);
+    MagnetikaProcessor a, b;
+    a.setStateInformation(old.getData(), static_cast<int>(old.getSize()));
+    b.setStateInformation(withIt.getData(), static_cast<int>(withIt.getSize()));
+    CHECK(a.state().getRawParameterValue("variation")->load() == 0.0f, "an old state should load with build variation 0 (got %g)",
+          a.state().getRawParameterValue("variation")->load());
+    CHECK(std::fabs(b.state().getRawParameterValue("variation")->load() - 0.7f) < 1e-4f, "a saved variation was not restored");
+}
+
 void testPresetStoreRoundTrip() {
     const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("magnetika-preset-test");
     dir.deleteRecursively();
@@ -938,6 +964,7 @@ int snapshot(const char* path, const juce::String& view) {
     setParam(p, "rotation", 0.35f);
     if (view.contains("bars")) setParam(p, "instrument", 1.0f);
     if (view.contains("mpe")) setParam(p, "mpe", 1.0f);
+    if (view.contains("revb")) setParam(p, "revBSizes", 1.0f);
     for (int m : {60, 64, 67, 72}) p.pushUiEvent({UiEvent::NoteOn, m, 0.85f});
     juce::AudioBuffer<float> buf(2, 256);
     juce::MidiBuffer midi;
@@ -997,6 +1024,7 @@ int main(int argc, char** argv) {
     testMpeSlideIsRubSpeed();
     testMpeGlideEdges();
     testBuildParameters();
+    testOldStateLoadsWithoutVariation();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

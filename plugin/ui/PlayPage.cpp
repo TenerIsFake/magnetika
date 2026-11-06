@@ -440,7 +440,10 @@ void PlayPage::timerCallback() {
     }
     if (glass)
         strip_.hint = !spindleBtn_.getToggleState() ? "Spindle stopped: rub along a rim to sound it."
-                                                    : "Press a rim to sound it. Drag across rims for a glissando.";
+                      : proc_.state().getRawParameterValue(id::revBSizes)->load() > 0.5f &&
+                                proc_.state().getRawParameterValue("g_spin")->load() > 0.6f
+                          ? juce::String::fromUTF8("Rev B sizes: the low bowls speak only below \xe2\x89\x88 0.6 rev/s.")
+                          : "Press a rim to sound it. Drag across rims for a glissando.";
     else
         strip_.hint = bars_.lastStrike().isNotEmpty() ? bars_.lastStrike()
                                                       : "Tap a bar to strike it. Drag across bars for a roll; hold to keep the damper off.";

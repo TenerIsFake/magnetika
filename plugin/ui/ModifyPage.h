@@ -109,13 +109,19 @@ private:
 
     MagnetikaProcessor& proc_;
     juce::TextButton glassBtn_{"GLASS"}, barsBtn_{"BARS"}, doneBtn_{"DONE"};
+    // the instrument as built: which one (Instrument No.) and how much its parts differ
+    juce::TextButton serialDown_{juce::String::fromUTF8("\xe2\x80\xb9")}, serialUp_{juce::String::fromUTF8("\xe2\x80\xba")};
+    juce::Slider variationKnob_{juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox};
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> variationAtt_;
+    void stepSerial(int delta);
+    bool revBHint() const;  // rev B sizes on, glass, spindle too fast for the low bowls
     Cutaway cutaway_;
     Faceplate glassPlate_, barsPlate_;
     AdvancedPanel advanced_;
     juce::MidiKeyboardComponent keyboard_;
     RangeStrip range_;
     MagnetikaProcessor::Display d_;
-    juce::Rectangle<float> nameplate_, infoWell_, pedals_, meters_;
+    juce::Rectangle<float> nameplate_, infoWell_, buildWell_, pedals_, meters_;
 };
 
 } // namespace magnetika::plugin
