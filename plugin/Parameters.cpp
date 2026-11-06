@@ -136,7 +136,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(fl("g_N", "Finger load", linear(0.2f, 6, 0.05f), 2.5f, "N"));
     layout.add(fl("g_dmu", "Finger wetness", linear(0, 0.8f, 0.01f), 0.45f));
     layout.add(fl("g_vs", "Weakening velocity", linear(0.02f, 0.5f, 0.005f), 0.2f, "m/s"));
-    layout.add(fl("g_breath", "Friction noise", linear(0, 1, 0.05f), 0.3f));
+    // The player's 0.3 put the hiss at about -42 dB per note from the first sample, while
+    // the tone needs 0.3-1 s to speak (C4-C6, velocity 0.3-0.7: -67 to -93 dB over the
+    // first 0.3 s), so every onset was a burst of hiss and a soft high note stayed under
+    // it. 0.1 is 9.5 dB lower; the knob still reaches the player's value.
+    layout.add(fl("g_breath", "Friction noise", linear(0, 1, 0.05f), 0.1f));
     layout.add(fl("g_fingerSpeed", "Finger speed (fixed bowl)", linear(1, 8, 0.1f), 3.8f, "rad/s"));
     layout.add(fl(glassSustainGain, "Glass sustain gain", linear(0.05f, 2, 0.01f), 0.8f, "N.s/m"));
     layout.add(fl(glassBrakeGain, "Glass brake gain", linear(0.1f, 3, 0.05f), 1.5f, "N.s/m"));
