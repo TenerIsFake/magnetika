@@ -95,6 +95,14 @@ at strictness 10.
   coils hold a note after the finger lifts. Held forever, every key played stays in the sound;
   so the coils' setpoint for a released note decays to −60 dB over this time. Notes still held
   keep full sustain. Both instruments.
+  The coils also never drive a released note louder than it was. It gets a level ceiling when
+  the finger lifts (on a bar, once the mallet has left it), which follows the note down while
+  the pedal is up and fades with the setpoint while it is down. Without it, pressing the pedal
+  pulled every still-ringing note back up towards the setpoint (a dying bar from −55 dB back to
+  −36 dB, a glass note about +14 dB), and a soft note released under the pedal grew. Now a note
+  the pedal catches rings on at its own rate, as with a lifted damper, until the fading setpoint
+  reaches it; re-pedalling brings nothing back. Taps and notes released under the pedal are
+  still sustained, up to the level they had.
 
 ### The instrument as built
 

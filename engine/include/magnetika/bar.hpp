@@ -32,8 +32,11 @@ public:
     void setNoteBend(double cents) { noteBend_ = cents; }
     void noteOn(double vel);
     void noteOff() {
+        if (on_) {  // a repeated note-off must not restart the fade
+            relT_ = 0;
+            relCap_ = -1;
+        }
         on_ = false;
-        relT_ = 0;
     }
     void kick(double vel) { noteOn(vel); }
     void silence();
@@ -55,7 +58,8 @@ private:
     double env_ = 0, venv_ = 0, t_ = 0, st_ = -1, sv_ = 0;
     bool on_ = false;
     double damp_ = 0;
-    double relT_ = 0;  // seconds since release (sustain fade)
+    double relT_ = 0;     // seconds under the pedal since release (sustain fade)
+    double relCap_ = -1;  // released bar's level ceiling (sustain fade); -1 = not taken yet
     double noteBend_ = 0;  // cents
     bool nyquistGuard_ = true, keep2_ = true;
 };

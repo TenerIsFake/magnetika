@@ -68,6 +68,7 @@ void BowlPhysics::noteOn(double vel) {
     touch_ = 1.0;  // a new strike starts at full finger load; a touch screen sets it after noteOn
     noteBend_ = 0;  // likewise, no per-note bend carries into the next note
     relT_ = 0;
+    relCap_ = -1;
     // coil start: a velocity-scaled burst through the coils (see step); 0 = off, as the JS
     startT_ = p.coilStart > 0 ? 0.0 : -1.0;
     startF_ = p.coilStart * vel;
@@ -80,8 +81,11 @@ void BowlPhysics::noteOn(double vel) {
 }
 
 void BowlPhysics::noteOff() {
+    if (on_) {  // a repeated note-off (a stray MPE one) must not restart the fade
+        relT_ = 0;
+        relCap_ = -1;  // taken at the next step, from the level the note has then
+    }
     on_ = false;
-    relT_ = 0;
     startT_ = -1;
     moving_ = false;
     omF_ = 0;
@@ -135,6 +139,28 @@ void BowlPhysics::step() {
     }
     const double Q2A = Ft * (-s2 / 2), Q2B = Ft * (c2 / 2), Q3A = Ft * (-s3t / 3), Q3B = Ft * (c3t / 3);
 
+    // Sustain fade (not in the JS), two parts, both only for a released note:
+    // 1. under the pedal the regulator's setpoint decays to -60 dB over sustainT60,
+    //    so the coils let the note fade instead of holding it forever;
+    // 2. a level ceiling, taken from the note's amplitude when the finger lifts.
+    //    With the pedal up it follows the note down (the damper); under the pedal it
+    //    decays like the setpoint. The coils may never drive the note above it, so
+    //    the pedal never brings back a note that was dying away, and releasing a
+    //    note under the pedal never makes it louder. A note the pedal catches late
+    //    rings on at its own rate until the fading setpoint reaches it; it is not
+    //    braked at once (the fade clock runs only under the pedal). A held note keeps
+    //    full sustain.
+    const bool fade = P.sustainT60 > 0 && !on_;
+    double relAmp = 0;
+    if (fade) {
+        if (P.driveOn != 0 && P.G > 0) relT_ += dt;
+        relAmp = std::sqrt(v[0] * v[0] + v[1] * v[1] + w0 * w0 * (q[0] * q[0] + q[1] * q[1]) + v[2] * v[2] +
+                           v[3] * v[3] + w3 * w3 * (q[2] * q[2] + q[3] * q[3]));
+        if (relCap_ < 0) relCap_ = relAmp;
+        else if (P.driveOn != 0 && P.G > 0) relCap_ *= std::exp(-6.907755278982137 * dt / P.sustainT60);
+        else relCap_ = std::fmin(relCap_, relAmp);
+    }
+
     double FA = 0, FB = 0, F3A = 0, F3B = 0, FkA = 0, FkB = 0;
     if (P.driveOn != 0) {
         psi_ += P.rot * 2 * PI * dt;
@@ -142,15 +168,14 @@ void BowlPhysics::step() {
         const double vpsi = v[0] * cp + v[1] * sp;
         const double av = std::fabs(vpsi);
         venv_ = av > venv_ ? av : venv_ * (1 - dt * 30);
-        // Sustain fade (not in the JS): once the finger has lifted, the regulator's
-        // setpoint decays to -60 dB over sustainT60, so the coils let a released note
-        // fade instead of holding it forever. A note still held keeps full sustain.
         double vset = P.vset;
-        if (P.sustainT60 > 0 && !on_ && P.G > 0) {
-            relT_ += dt;
-            vset *= std::exp(-6.907755278982137 * relT_ / P.sustainT60);
-        }
-        const double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / vset)) : P.G;
+        if (fade && P.G > 0) vset *= std::exp(-6.907755278982137 * relT_ / P.sustainT60);
+        double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / vset)) : P.G;
+        // The ceiling only withholds drive (full 10 % under it, none at or over it);
+        // braking stays the setpoint's job. Braking toward the ceiling too was tried
+        // and slowed the fade: the coils brake only the part of the motion on their axis.
+        if (fade && P.G > 0 && relCap_ >= 0)
+            geff = std::fmin(geff, P.G * std::fmax(0.0, std::fmin(1.0, 10 * (1 - relAmp / (relCap_ + 1e-12)))));
         if (P.G > 0) {
             const double Fd = P.Fmax * std::tanh(geff * vpsi / P.Fmax);
             FA = Fd * cp;

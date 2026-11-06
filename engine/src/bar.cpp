@@ -52,6 +52,7 @@ void BarPhysics::noteOn(double vel) {
     sv_ = vel;
     on_ = true;
     relT_ = 0;
+    relCap_ = -1;
     noteBend_ = 0;
     // Nyquist guard for the 4x partial; see BowlPhysics::noteOn.
     keep2_ = !nyquistGuard_ || p.f0 * p.ratio < 0.5 * sr_ / 1.05;
@@ -83,16 +84,29 @@ void BarPhysics::step() {
             st_ = -1;
         }
     }
+    // Sustain fade, as BowlPhysics: the decaying setpoint plus a level ceiling,
+    // here on the fundamental (the mode the main coil drives). The ceiling is taken
+    // once the mallet has left the bar, so a tap released within the strike keeps it.
+    const bool fade = P.sustainT60 > 0 && !on_;
+    double relAmp = 0;
+    if (fade) {
+        if (P.driveOn != 0 && P.G > 0) relT_ += dt;
+        relAmp = std::sqrt(v[0] * v[0] + w1 * w1 * q[0] * q[0]);
+        if (relCap_ < 0) {
+            if (st_ < 0) relCap_ = relAmp;
+        }
+        else if (P.driveOn != 0 && P.G > 0) relCap_ *= std::exp(-6.907755278982137 * dt / P.sustainT60);
+        else relCap_ = std::fmin(relCap_, relAmp);
+    }
     double D1 = 0, D2 = 0, K1 = 0;
     if (P.driveOn != 0) {
         const double av = std::fabs(v[0]);
         venv_ = av > venv_ ? av : venv_ * (1 - dt * 30);
-        double vset = P.vset;  // sustain fade, as BowlPhysics
-        if (P.sustainT60 > 0 && !on_ && P.G > 0) {
-            relT_ += dt;
-            vset *= std::exp(-6.907755278982137 * relT_ / P.sustainT60);
-        }
-        const double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / vset)) : P.G;
+        double vset = P.vset;
+        if (fade && P.G > 0) vset *= std::exp(-6.907755278982137 * relT_ / P.sustainT60);
+        double geff = P.G > 0 ? std::fmax(-P.G, P.G * (1 - venv_ / vset)) : P.G;
+        if (fade && P.G > 0 && relCap_ >= 0)
+            geff = std::fmin(geff, P.G * std::fmax(0.0, std::fmin(1.0, 10 * (1 - relAmp / (relCap_ + 1e-12)))));
         D1 = P.Fmax * std::tanh(geff * v[0] / P.Fmax);
         if (P.coil2 != 0) D2 = 0.5 * P.Fmax * std::tanh(geff * v[1] / (0.5 * P.Fmax));
         t_ += dt;

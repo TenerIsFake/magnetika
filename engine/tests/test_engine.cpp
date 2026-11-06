@@ -666,6 +666,106 @@ void testSustainFade() {
     }
 }
 
+void testSustainNeverRevivesAReleasedNote() {
+    // Tener: the pedal brought back notes that were dying away. A note released
+    // with the pedal up, caught by the pedal later, must keep falling; one released
+    // under the pedal must never get louder than it was. Fade and damper as the plugin's.
+    auto run = [](Instrument inst, bool pedalFirst, double vel, double offAt) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setInst(inst);
+        s.setCoilsArmed(true);
+        const ParamValue f[] = {{ParamId::sustainT60, 6.0}, {ParamId::damperT60, inst == Instrument::Glass ? 1.5 : 1.0}};
+        s.setParams(inst, f, 2);
+        PerfValue sus[] = {{PerfId::sustain, pedalFirst ? 1.0 : 0.0}};
+        s.setPerf(sus, 1);
+        s.noteOn(72, vel);
+        return runBlocks(s, 5.0, [&](int b) {
+            if (b == blockAt(offAt)) s.noteOff(72);
+            if (b == blockAt(offAt + 0.5) && !pedalFirst) {
+                sus[0].value = 1;
+                s.setPerf(sus, 1);
+            }
+        });
+    };
+    for (Instrument inst : {Instrument::Glass, Instrument::Bars}) {
+        const char* name = inst == Instrument::Glass ? "glass" : "bars";
+        // half-second windows, 2 dB slack: a glass note's level swings 1-2 dB as its
+        // pattern turns past the ears; the old revival was +19 dB (bars)
+        const Stereo caught = run(inst, false, 0.8, 1.0);
+        const double atCatch = caught.energyDb(1.3, 1.5);
+        double lowest = atCatch;
+        for (double t = 1.5; t < 4.99; t += 0.5) {
+            const double now = caught.energyDb(t, t + 0.5);
+            CHECK(now < lowest + 2, "%s: the pedal brought a dying note back up at %.1f s (%.1f -> %.1f dB)", name, t, lowest,
+                  now);
+            lowest = std::fmin(lowest, now);
+        }
+        const double caughtDrop = atCatch - caught.energyDb(4.5, 5.0);
+        CHECK(caughtDrop > 15, "%s: a note the pedal caught dropped only %.1f dB in 3.3 s", name, caughtDrop);
+        // released once settled; compared with its loudest 0.25 s in the half second
+        // before (a glass note's level swings about a dB as the pattern turns)
+        for (double vel : {0.2, 0.9}) {
+            const Stereo held = run(inst, true, vel, 2.0);
+            const double atRelease = std::fmax(held.energyDb(1.5, 1.75), held.energyDb(1.75, 2.0));
+            for (double t = 2.0; t < 4.99; t += 0.25) {
+                const double now = held.energyDb(t, t + 0.25);
+                CHECK(now < atRelease + 1, "%s vel %.1f: released under the pedal, louder at %.2f s (%.1f vs %.1f dB)", name,
+                      vel, t, now, atRelease);
+            }
+        }
+    }
+}
+
+void testSustainStillSustainsReleasedNotes() {
+    // The ceiling must not stop the pedal doing its job. Bars, pedal down, no damper
+    // (so coils on and coils off differ only by the coils' drive), a long fade:
+    // a tap released within the mallet's strike and a note released at 1 s both
+    // stay well above their natural decay. And a repeated note-off (a stray MPE
+    // one) must not restart the fade.
+    auto run = [](double offAt, double Gs, int extraOffs) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setInst(Instrument::Bars);
+        s.setCoilsArmed(true);
+        const ParamValue f[] = {{ParamId::sustainT60, 30.0}, {ParamId::damperT60, 0}};
+        s.setParams(Instrument::Bars, f, 2);
+        const PerfValue sus[] = {{PerfId::sustain, 1}, {PerfId::Gs, Gs}};
+        s.setPerf(sus, 2);
+        s.noteOn(72, 0.8);
+        if (offAt == 0) s.noteOff(72);  // before the first sample: inside the strike
+        return runBlocks(s, 4.0, [&](int b) {
+            if (offAt > 0 && b == blockAt(offAt)) s.noteOff(72);
+            for (int k = 1; k <= extraOffs; ++k)
+                if (b == blockAt(offAt + k)) s.noteOff(72);
+        });
+    };
+    for (double offAt : {0.0, 1.0}) {
+        const double coils = run(offAt, 0.8, 0).energyDb(3.0, 3.5), natural = run(offAt, 0, 0).energyDb(3.0, 3.5);
+        CHECK(coils > natural + 6, "released at %.1f s: the pedal's coils held the bar only %.1f dB over its natural decay",
+              offAt, coils - natural);
+    }
+    // glass and the default fade: a note released under the pedal at 1 s, then
+    // stray note-offs at 2 and 3 s, must fade as with one note-off
+    auto glass = [](int extraOffs) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setCoilsArmed(true);
+        const ParamValue f[] = {{ParamId::sustainT60, 6.0}};
+        s.setParams(Instrument::Glass, f, 1);
+        const PerfValue sus[] = {{PerfId::sustain, 1}};
+        s.setPerf(sus, 1);
+        s.noteOn(72, 0.8);
+        return runBlocks(s, 5.0, [&](int b) {
+            if (b == blockAt(1.0)) s.noteOff(72);
+            for (int k = 1; k <= extraOffs; ++k)
+                if (b == blockAt(1.0 + k)) s.noteOff(72);
+        });
+    };
+    const double once = glass(0).energyDb(4.0, 4.5), repeated = glass(2).energyDb(4.0, 4.5);
+    CHECK(std::fabs(repeated - once) < 2, "repeated note-offs changed a fading note: %.1f vs %.1f dB", repeated, once);
+}
+
 void testStillFingerOnStoppedSpindleStopsExciting() {
     // Spindle stopped: the finger must travel along the rim to excite the bowl.
     // One finger keeps rubbing; the other stops at 0.5 s and the note must fade.
@@ -768,6 +868,8 @@ int main() {
     testBuildVariation();
     testCoilStart();
     testSustainFade();
+    testSustainNeverRevivesAReleasedNote();
+    testSustainStillSustainsReleasedNotes();
     testStillFingerOnStoppedSpindleStopsExciting();
     testPatternAngleFollowsTheDrive();
     testSnapshotReportsVoices();

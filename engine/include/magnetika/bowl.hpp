@@ -99,7 +99,8 @@ private:
     double m_ = 0.02;
     double Ft_ = 0, vrel_ = 0;
     double damp_ = 0;  // damper engagement 0..1, ramps in after release
-    double relT_ = 0;  // seconds since the finger lifted (sustain fade)
+    double relT_ = 0;     // seconds under the pedal since the finger lifted (sustain fade)
+    double relCap_ = -1;  // released note's level ceiling (sustain fade); -1 = not taken yet
     double startT_ = -1, startF_ = 0;  // coil start: time into the burst (-1 = none), its force
     double touch_ = 1.0;
     double noteBend_ = 0;  // cents
