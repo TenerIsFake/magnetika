@@ -151,6 +151,12 @@ meters. DONE returns to the play view.
 `test-plugin --snapshot out.png [glass|bars|modify|modify-bars][-mpe]` renders the editor offscreen with a
 chord playing, for looking at the UI without a desktop session.
 
+`test-plugin --render in.mid out.wav [glass|bars] [level]` plays a MIDI file through the plugin with
+its default settings and writes a 48 kHz 24-bit WAV, so builds can be compared on real music (for
+example Mozart's Adagio for glass harmonica, K. 356) or against a recording. Only notes and the
+sustain pedal are passed: a file's program changes would switch the instrument. At the default level
+(0.6), chords drive the output limiter; 0.25 keeps a piece like K. 356 clear of it.
+
 ## Running
 
 Node 18 or later, CMake 3.22 or later, a C++17 compiler. No other dependencies.

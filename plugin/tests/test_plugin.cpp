@@ -990,8 +990,102 @@ int snapshot(const char* path, const juce::String& view) {
     return ok ? 0 : 1;
 }
 
+// --render in.mid out.wav [glass|bars] [level]: plays a MIDI file through the plugin as it
+// loads (default parameters; `level` sets Glass/Bar level, default 0.6) and writes a
+// 48 kHz 24-bit stereo WAV, for comparing builds against each other or against a
+// recording. Chords at the default level drive the output limiter; 0.25 keeps clear. Only notes and the sustain pedal
+// (CC64) are passed, all on channel 1: a file's program changes would switch the
+// instrument, and its volume/expression/pan controllers mean nothing here.
+int renderMidi(const juce::String& inPath, const juce::String& outPath, const juce::String& inst, float level) {
+    const juce::File inFile = juce::File::getCurrentWorkingDirectory().getChildFile(inPath);
+    juce::FileInputStream in(inFile);
+    juce::MidiFile mf;
+    if (!in.openedOk() || !mf.readFrom(in)) {
+        std::printf("cannot read MIDI file %s\n", inPath.toRawUTF8());
+        return 1;
+    }
+    mf.convertTimestampTicksToSeconds();
+    juce::MidiMessageSequence seq;
+    int notes = 0, pedals = 0, dropped = 0;
+    for (int t = 0; t < mf.getNumTracks(); ++t)
+        for (const auto* e : *mf.getTrack(t)) {
+            juce::MidiMessage m = e->message;
+            if (m.isNoteOnOrOff()) {
+                notes += m.isNoteOn() ? 1 : 0;
+            } else if (m.isController() && m.getControllerNumber() == 64) {
+                ++pedals;
+            } else {
+                dropped += m.isMetaEvent() ? 0 : 1;
+                continue;
+            }
+            m.setChannel(1);
+            seq.addEvent(m);
+        }
+    seq.sort();
+    seq.updateMatchedPairs();
+    if (notes == 0) {
+        std::printf("no notes in %s\n", inPath.toRawUTF8());
+        return 1;
+    }
+
+    MagnetikaProcessor p;
+    if (inst == "bars") setParam(p, "instrument", 1);
+    setParam(p, inst == "bars" ? "b_master" : "g_master", level);
+    constexpr int block = 256;
+    p.setPlayConfigDetails(0, 2, SR, block);
+    p.prepareToPlay(SR, block);
+
+    const double end = seq.getEndTime();
+    const int maxTail = static_cast<int>(20 * SR);  // ring-out after the last event, at most 20 s
+    juce::AudioBuffer<float> all(2, static_cast<int>(end * SR) + maxTail + block);
+    juce::AudioBuffer<float> buf(2, block);
+    int next = 0, quiet = 0, written = 0;
+    for (int start = 0;; start += block) {
+        buf.clear();
+        juce::MidiBuffer midi;
+        while (next < seq.getNumEvents()) {
+            const auto& m = seq.getEventPointer(next)->message;
+            const int at = static_cast<int>(std::lround(m.getTimeStamp() * SR));
+            if (at >= start + block) break;
+            midi.addEvent(m, std::max(0, at - start));
+            ++next;
+        }
+        p.processBlock(buf, midi);
+        for (int c = 0; c < 2; ++c) all.copyFrom(c, start, buf, c, 0, block);
+        written = start + block;
+        if (next >= seq.getNumEvents()) {
+            // stop after half a second below -90 dBFS, or at the tail limit
+            quiet = buf.getMagnitude(0, block) < 3.2e-5f ? quiet + block : 0;
+            if (quiet >= SR / 2 || written >= static_cast<int>(end * SR) + maxTail) break;
+        }
+    }
+
+    const juce::File outFile = juce::File::getCurrentWorkingDirectory().getChildFile(outPath);
+    outFile.deleteFile();
+    std::unique_ptr<juce::OutputStream> os(outFile.createOutputStream());
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> w;
+    if (os != nullptr)  // takes the stream on success
+        w = wav.createWriterFor(
+            os, juce::AudioFormatWriterOptions{}.withSampleRate(SR).withNumChannels(2).withBitsPerSample(24));
+    if (w == nullptr) {
+        std::printf("cannot write %s\n", outPath.toRawUTF8());
+        return 1;
+    }
+    w->writeFromAudioSampleBuffer(all, 0, written);
+    w.reset();  // flushes the header
+    const float peak = all.getMagnitude(0, written);
+    std::printf("%s -> %s (%s, level %.2f): %d notes, %d pedal events, %d other events dropped; %.1f s, peak %.1f dBFS\n",
+                inPath.toRawUTF8(), outPath.toRawUTF8(), inst == "bars" ? "bars" : "glass", level, notes, pedals,
+                dropped, written / SR, 20 * std::log10(peak + 1e-12f));
+    return 0;
+}
+
 int main(int argc, char** argv) {
     juce::ScopedJuceInitialiser_GUI juce;  // message manager for parameter notifications
+    if (argc >= 4 && juce::String(argv[1]) == "--render")
+        return renderMidi(argv[2], argv[3], argc >= 5 ? juce::String(argv[4]) : "glass",
+                          argc >= 6 ? juce::String(argv[5]).getFloatValue() : 0.6f);
     if (argc >= 3 && juce::String(argv[1]) == "--snapshot") return snapshot(argv[2], argc >= 4 ? juce::String(argv[3]) : "glass");
     testDefaults();
     testSampleAccurateNoteOn();
