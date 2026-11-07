@@ -1,5 +1,6 @@
 #include "magnetika/synth.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace magnetika {
@@ -10,6 +11,16 @@ Synth::Synth(double sampleRate, int voices)
         v.bowl = BowlPhysics(sr_);
         v.bar = BarPhysics(sr_);
     }
+    for (auto& g : gain_) g.fill(1.0f);
+}
+
+void Synth::setNoteGain(Instrument which, int midi, double gain) {
+    if (midi < 0 || midi > 127 || !std::isfinite(gain)) return;
+    gain_[which == Instrument::Glass ? 0 : 1][static_cast<size_t>(midi)] = static_cast<float>(std::max(0.0, gain));
+}
+
+double Synth::noteGain(Instrument which, int midi) const {
+    return midi < 0 || midi > 127 ? 1.0 : gain_[which == Instrument::Glass ? 0 : 1][static_cast<size_t>(midi)];
 }
 
 void Synth::setParams(Instrument which, const ParamValue* values, int count) {
@@ -161,6 +172,7 @@ void Synth::noteOn(int midi, double vel) {
         if (!v) v = &voices_[stealIndex()];
         make(*v, midi);
         v->midi = midi;
+        v->gain = gainFor(*v);  // a new voice starts at its level, no ramp
         ++notes_;
         // JS: seed(Math.imul(midi+1, 2654435761) ^ notes)
         if (v->kind == Voice::Kind::Bowl)
@@ -201,8 +213,24 @@ void Synth::render(float* L, float* R, int n) {
     for (int vi = 0; vi < numVoices_; ++vi) {
         Voice& v = voices_[vi];
         if (v.kind == Voice::Kind::None) continue;
-        if (v.kind == Voice::Kind::Bowl) v.bowl.render(L, R, n, true);
-        else v.bar.render(L, R, n, true);
+        const float g = gainFor(v);
+        if (g == 1.0f && v.gain == 1.0f) {
+            if (v.kind == Voice::Kind::Bowl) v.bowl.render(L, R, n, true);
+            else v.bar.render(L, R, n, true);
+        } else {
+            // render apart, then add it scaled, ramping from the last level over this block
+            for (int pos = 0; pos < n; pos += kChunk) {
+                const int m = std::min(kChunk, n - pos);
+                if (v.kind == Voice::Kind::Bowl) v.bowl.render(voiceL_.data(), voiceR_.data(), m, false);
+                else v.bar.render(voiceL_.data(), voiceR_.data(), m, false);
+                for (int i = 0; i < m; ++i) {
+                    const float k = v.gain + (g - v.gain) * static_cast<float>(pos + i + 1) / static_cast<float>(n);
+                    L[pos + i] += k * voiceL_[static_cast<size_t>(i)];
+                    R[pos + i] += k * voiceR_[static_cast<size_t>(i)];
+                }
+            }
+        }
+        v.gain = g;
         const bool diverged = !std::isfinite(v.env());
         if (diverged || (!v.held && v.env() < 1e-5 && !v.on())) {
             v.kind = Voice::Kind::None;

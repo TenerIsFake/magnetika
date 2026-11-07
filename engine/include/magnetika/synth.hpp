@@ -95,6 +95,12 @@ public:
     // Per-note pitch bend in cents for the voice playing `midi` (glass or bars), on
     // top of the shared bend: MPE. The coils' spring sets how far it can go.
     void setNoteBend(int midi, double cents);
+    // 10. Per-note output level (linear, 1 = as modelled, the default), for glass and
+    //    bars separately: scales what that note's voice adds to the mix, ahead of the
+    //    limiter. Live: a sounding voice ramps to a new value over its next block. All 1
+    //    renders exactly as before.
+    void setNoteGain(Instrument which, int midi, double gain);
+    double noteGain(Instrument which, int midi) const;
 
     // What an editor draws: one entry per allocated voice. Read on the audio
     // thread after render() and hand across to the UI by the plugin.
@@ -119,6 +125,7 @@ private:
         int midi = -1;
         std::uint64_t age = 0;
         bool held = false;
+        float gain = 1;  // the per-note level it last rendered at
 
         double env() const { return kind == Kind::Bowl ? bowl.env() : bar.env(); }
         bool on() const { return kind == Kind::Bowl ? bowl.on() : bar.on(); }
@@ -148,6 +155,10 @@ private:
     double variation_ = 0;
     std::uint64_t tick_ = 0;
     std::uint32_t notes_ = 0;
+    std::array<std::array<float, 128>, 2> gain_;  // [glass, bars][midi]
+    float& gainFor(const Voice& v) { return gain_[v.kind == Voice::Kind::Bowl ? 0 : 1][static_cast<size_t>(v.midi & 127)]; }
+    static constexpr int kChunk = 256;
+    std::array<float, kChunk> voiceL_{}, voiceR_{};  // a scaled voice renders here first
 };
 
 } // namespace magnetika

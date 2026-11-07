@@ -2,6 +2,7 @@
 // comparison cannot cover it: "coils always armed" and voice stealing.
 
 #include <cmath>
+#include <functional>
 #include <cstdio>
 #include <vector>
 
@@ -845,6 +846,67 @@ void testSnapshotReportsVoices() {
     CHECK(saw67, "released note 67 should be listed as not held");
 }
 
+void testNoteGain() {
+    // all 1 is the old path bit for bit; 0.5 is -6 dB on that note only; the other
+    // instrument's table does not touch it; a live change ramps over one block
+    const int total = static_cast<int>(2.0 * SR) / 1000 * 1000;
+    auto run = [&](int block, const std::function<void(Synth&)>& setup, const std::function<void(Synth&, int)>& each,
+                   bool chord) {
+        Synth s(SR);
+        playerDefaults(s);
+        setup(s);
+        s.noteOn(72, 0.8);
+        if (chord) s.noteOn(60, 0.8);
+        Stereo out;
+        out.L.resize(static_cast<size_t>(total));
+        out.R.resize(static_cast<size_t>(total));
+        for (int i = 0, b = 0; i < total; i += block, ++b) {
+            each(s, b);
+            s.render(&out.L[static_cast<size_t>(i)], &out.R[static_cast<size_t>(i)], std::min(block, total - i));
+        }
+        return out;
+    };
+    const auto none = [](Synth&) {};
+    const auto still = [](Synth&, int) {};
+    const Stereo plain = run(BLOCK, none, still, true);
+    const Stereo ones = run(BLOCK, [](Synth& s) { s.setNoteGain(Instrument::Glass, 72, 1.0); }, still, true);
+    CHECK(ones.L == plain.L && ones.R == plain.R, "gain 1 changed the render");
+    const Stereo bars = run(BLOCK, [](Synth& s) { s.setNoteGain(Instrument::Bars, 72, 0.0); }, still, true);
+    CHECK(bars.L == plain.L && bars.R == plain.R, "the bars table changed a glass note");
+
+    // one quiet note alone, so the limiter stays linear
+    const auto quiet = [](Synth& s) {
+        const ParamValue m[] = {{ParamId::master, 0.05}};
+        s.setParams(Instrument::Glass, m, 1);
+    };
+    const auto half = [&](Synth& s) {
+        quiet(s);
+        s.setNoteGain(Instrument::Glass, 72, 0.5);
+    };
+    const double d = run(BLOCK, half, still, false).energyDb(1.0, 2.0) - run(BLOCK, quiet, still, false).energyDb(1.0, 2.0);
+    CHECK(std::fabs(d + 6.02) < 0.3, "gain 0.5 moved the note by %.2f dB, want -6.02", d);
+    const Stereo small = run(BLOCK, half, still, false), big = run(1000, half, still, false);  // 1000 > the chunk
+    CHECK(small.L == big.L && small.R == big.R, "a scaled note depends on the block size");
+
+    // live: 1 -> 0 at block 200 is silent from the next block on, with no step
+    const int at = 200;
+    const Stereo cut = run(BLOCK, none, [&](Synth& s, int b) {
+        if (b == at) {
+            s.setNoteGain(Instrument::Glass, 72, 0.0);
+            s.setNoteGain(Instrument::Glass, 60, 0.0);
+        }
+    }, true);
+    double after = 0, step = 0, before = 0;
+    for (size_t i = static_cast<size_t>((at + 1) * BLOCK); i < cut.L.size(); ++i)
+        after = std::max(after, static_cast<double>(std::fabs(cut.L[i])));
+    for (size_t i = static_cast<size_t>(at * BLOCK); i < static_cast<size_t>((at + 1) * BLOCK); ++i)
+        step = std::max(step, static_cast<double>(std::fabs(cut.L[i] - cut.L[i - 1])));
+    for (size_t i = static_cast<size_t>((at - 1) * BLOCK); i < static_cast<size_t>(at * BLOCK); ++i)
+        before = std::max(before, static_cast<double>(std::fabs(plain.L[i] - plain.L[i - 1])));
+    CHECK(after == 0.0, "gain 0 left %.3g after the ramp", after);
+    CHECK(step <= before * 1.5 + 1e-6, "the ramp jumped: step %.3g vs %.3g", step, before);
+}
+
 } // namespace
 
 int main() {
@@ -873,6 +935,7 @@ int main() {
     testStillFingerOnStoppedSpindleStopsExciting();
     testPatternAngleFollowsTheDrive();
     testSnapshotReportsVoices();
+    testNoteGain();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;
