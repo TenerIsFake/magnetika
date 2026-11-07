@@ -951,6 +951,56 @@ void testPresetStoreRoundTrip() {
     dir.deleteRecursively();
 }
 
+void testBowlLevels() {
+    // evening (default 1) plays every bowl at C4's level; a trim moves one bowl; both reach the sound
+    MagnetikaProcessor p;
+    CHECK(p.state().getRawParameterValue("levelEven")->load() == 1.0f, "Bowl level evening should default to 1");
+    CHECK(p.bowlGainDb(60) == 0.0f, "C4 is the reference, got %g dB", p.bowlGainDb(60));
+    CHECK(std::fabs(p.bowlGainDb(84) + 11.4f) < 0.05f, "C6 evening %g dB, want -11.4", p.bowlGainDb(84));
+    CHECK(std::fabs(p.bowlGainDb(48) - 6.3f) < 0.05f, "C3 evening %g dB, want +6.3", p.bowlGainDb(48));
+    CHECK(p.bowlGainDb(36) == 9.0f, "the low boost should stop at +9 dB, got %g", p.bowlGainDb(36));
+
+    // what one held C6 measures over 1-2 s, at a level the limiter leaves linear
+    auto level = [](float even, float trim) {
+        MagnetikaProcessor q;
+        setParam(q, "g_master", 0.1f);
+        setParam(q, "levelEven", even);
+        q.setBowlTrimDb(84, trim);
+        const auto r = render(q, static_cast<int>(2 * SR), 256, {{0, juce::MidiMessage::noteOn(1, 84, 0.8f)}});
+        return rmsDb(r.L, 1.0, 2.0) + rmsDb(r.R, 1.0, 2.0);
+    };
+    const double raw = level(0, 0), even = level(1, 0), trimmed = level(1, 6);
+    CHECK(std::fabs((even - raw) / 2 + 11.4) < 0.5, "evening moved C6 by %.2f dB, want -11.4", (even - raw) / 2);
+    CHECK(std::fabs((trimmed - even) / 2 - 6.0) < 0.5, "a +6 dB trim moved C6 by %.2f dB", (trimmed - even) / 2);
+
+    // trims are clamped, saved with the project, and replaced (not merged) by a load
+    p.setBowlTrimDb(70, 40.0f);
+    CHECK(p.bowlTrimDb(70) == MagnetikaProcessor::kTrimMaxDb, "trim not clamped: %g", p.bowlTrimDb(70));
+    p.setBowlTrimDb(70, -3.5f);
+    p.setBowlTrimDb(91, 2.25f);
+    juce::MemoryBlock mb;
+    p.getStateInformation(mb);
+    MagnetikaProcessor b;
+    b.setBowlTrimDb(60, 5.0f);
+    b.setStateInformation(mb.getData(), static_cast<int>(mb.getSize()));
+    CHECK(b.bowlTrimDb(70) == -3.5f && b.bowlTrimDb(91) == 2.25f, "trims not restored: %g %g", b.bowlTrimDb(70), b.bowlTrimDb(91));
+    CHECK(b.bowlTrimDb(60) == 0.0f, "a load should clear trims the project did not have (C4 kept %g)", b.bowlTrimDb(60));
+    CHECK(!b.state().state.hasProperty("bowlTrims"), "trims leaked into the parameter tree (and so into presets)");
+
+    // a project saved before evening existed loads with it off, so it sounds as it did
+    auto xml = juce::AudioProcessor::getXmlFromBinary(mb.getData(), static_cast<int>(mb.getSize()));
+    CHECK(xml != nullptr, "state did not round-trip as XML");
+    if (xml == nullptr) return;
+    auto tree = juce::ValueTree::fromXml(*xml);
+    tree.removeChild(tree.getChildWithProperty("id", "levelEven"), nullptr);
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary(*tree.createXml(), old);
+    MagnetikaProcessor c;
+    c.setStateInformation(old.getData(), static_cast<int>(old.getSize()));
+    CHECK(c.state().getRawParameterValue("levelEven")->load() == 0.0f, "an old state should load with evening 0");
+    CHECK(c.bowlGainDb(84) == 0.0f, "with evening off C6 should play as modelled, got %g dB", c.bowlGainDb(84));
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
@@ -1119,6 +1169,7 @@ int main(int argc, char** argv) {
     testMpeGlideEdges();
     testBuildParameters();
     testOldStateLoadsWithoutVariation();
+    testBowlLevels();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

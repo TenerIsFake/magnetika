@@ -75,6 +75,15 @@ public:
     };
     Display readDisplay() const;
 
+    // ---- per-bowl level (glass): the evening curve (a parameter) plus the player's own
+    // trim for each bowl. Trims are set from the editor (message thread), saved with the
+    // project and not with presets: they belong to the instrument, like its tuning.
+    static constexpr float kTrimMinDb = -24.0f, kTrimMaxDb = 12.0f;
+    void setBowlTrimDb(int midi, float db);
+    float bowlTrimDb(int midi) const;
+    void resetBowlTrims();
+    float bowlGainDb(int midi) const;  // what the bowl plays at now: evening + trim
+
 private:
     // Performance state: what the engine is currently told. Both the plugin
     // parameters and incoming MIDI write it; whichever moved last wins, as when
@@ -174,7 +183,13 @@ private:
     bool mpeActive_ = false;
     float lastMpeParam_ = -1;
     std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr,
-                       *mpeGlideRaw_ = nullptr, *revBRaw_ = nullptr, *serialRaw_ = nullptr, *variationRaw_ = nullptr;
+                       *mpeGlideRaw_ = nullptr, *revBRaw_ = nullptr, *serialRaw_ = nullptr, *variationRaw_ = nullptr,
+                       *levelEvenRaw_ = nullptr;
+    std::array<std::atomic<float>, 128> trimDb_{};
+    std::atomic<std::uint32_t> trimsVersion_{0};  // bumped by every trim change
+    std::uint32_t appliedTrims_ = ~0u;            // audio thread: the version the engine has
+    float lastLevelEven_ = -1;
+    void applyBowlLevels();
 
     // seqlock: odd while the audio thread writes, even when the copy is consistent
     std::atomic<std::uint32_t> dispSeq_{0};

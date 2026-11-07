@@ -34,6 +34,7 @@ inline constexpr const char* revBSizes = "revBSizes";    // bowls at their rev B
 inline constexpr const char* serialNo = "serialNo";      // which simulated instrument (build variation pattern)
 inline constexpr const char* variation = "variation";    // how much its bowls and bars differ, 0..1
 inline constexpr const char* mpeGlide = "mpeGlide";  // glass: a long MPE bend slides the finger to the next bowl
+inline constexpr const char* levelEven = "levelEven";  // glass: 0..1 of the correction that evens the bowls' levels
 } // namespace id
 
 // One engine parameter of one instrument, driven by one plugin parameter.
@@ -60,6 +61,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 // For build variation that would change how old material sounds (it played as 0),
 // so a state without it gets 0. Call on a tree before replaceState.
 void upgradeState(juce::ValueTree& state);
+
+// Glass: each bowl's level relative to C4 at the plugin's defaults, dB (C2-C7 measured,
+// the ends held beyond). Bowl level evening subtracts it, so 1 plays every bowl alike.
+float glassLevelReC4Db(int midi);
+// The evening correction for a bowl at `amount` (0..1), dB, capped at +9 / -24.
+float glassEvenDb(int midi, float amount);
 
 // Glass materials from the original single-bowl simulation. Selecting one sets
 // Q2, Q3 and the A-B split, exactly as the player's material chips do.

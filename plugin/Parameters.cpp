@@ -95,12 +95,35 @@ const std::vector<EngineMapping>& engineMappings() {
 }
 
 void upgradeState(juce::ValueTree& state) {
-    if (!state.getChildWithProperty("id", id::variation).isValid()) {
-        juce::ValueTree p("PARAM");
-        p.setProperty("id", id::variation, nullptr);
-        p.setProperty("value", 0.0f, nullptr);
-        state.appendChild(p, nullptr);
-    }
+    // added later; material saved before them played as 0
+    for (const char* pid : {id::variation, id::levelEven})
+        if (!state.getChildWithProperty("id", pid).isValid()) {
+            juce::ValueTree p("PARAM");
+            p.setProperty("id", pid, nullptr);
+            p.setProperty("value", 0.0f, nullptr);
+            state.appendChild(p, nullptr);
+        }
+}
+
+// Measured on the engine at the plugin defaults (coils armed, coil start 0.1 N, no
+// build variation): mean of velocities 0.3 / 0.5 / 0.7 / 1.0 over 1-3 s of a held
+// note, 3-note smoothed. Velocity hardly moves it once the coils hold the rim speed;
+// the tilt is about 5.6 dB per octave, flattening above C6.
+float glassLevelReC4Db(int midi) {
+    static constexpr int lo = 36;
+    static constexpr float table[] = {
+        -12.3f, -11.9f, -11.4f, -10.8f, -10.3f, -9.8f, -9.3f, -8.8f, -8.3f, -7.8f, -7.3f, -6.8f,
+        -6.3f, -5.7f, -5.2f, -4.7f, -4.2f, -3.7f, -3.2f, -2.7f, -2.1f, -1.6f, -1.1f, -0.5f,
+        0.0f, 0.5f, 1.1f, 1.6f, 2.1f, 2.6f, 3.1f, 3.6f, 4.1f, 4.6f, 5.1f, 5.5f,
+        6.0f, 6.5f, 7.0f, 7.4f, 7.9f, 8.4f, 8.8f, 9.2f, 9.7f, 10.1f, 10.6f, 11.0f,
+        11.4f, 11.7f, 11.9f, 12.2f, 12.5f, 12.8f, 13.1f, 13.4f, 13.6f, 13.9f, 14.0f, 14.1f,
+        14.1f};
+    constexpr int n = static_cast<int>(sizeof table / sizeof table[0]);
+    return table[juce::jlimit(0, n - 1, midi - lo)];
+}
+
+float glassEvenDb(int midi, float amount) {
+    return juce::jlimit(-24.0f, 9.0f, -juce::jlimit(0.0f, 1.0f, amount) * glassLevelReC4Db(midi));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
@@ -152,6 +175,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(fl("g_kappa", "Bryan factor", linear(0, 0.7f, 0.01f), 0.35f));
     layout.add(fl("g_listen", "Glass ear angle", linear(-180, 180, 1), 0, "deg"));
     layout.add(fl("g_master", "Glass level", linear(0, 1, 0.01f), 0.6f));
+    layout.add(fl(id::levelEven, "Bowl level evening", linear(0, 1, 0.01f), 1.0f));
     layout.add(fl("g_damper", "Glass damper (tail, 0 = off)", linear(0, 10, 0.05f), 1.5f, "s"));
     layout.add(fl("g_coilStart", "Glass coil start (0 = off)", linear(0, 0.3f, 0.005f), 0.1f, "N"));
 

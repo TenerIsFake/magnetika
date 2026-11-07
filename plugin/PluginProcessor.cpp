@@ -35,6 +35,8 @@ MagnetikaProcessor::MagnetikaProcessor()
     revBRaw_ = get(id::revBSizes);
     serialRaw_ = get(id::serialNo);
     variationRaw_ = get(id::variation);
+    levelEvenRaw_ = get(id::levelEven);
+    for (auto& t : trimDb_) t.store(0.0f);
     rpnMsb_.fill(127);
     rpnLsb_.fill(127);
     startTimerHz(20);
@@ -114,6 +116,11 @@ void MagnetikaProcessor::applyParameters(bool force) {
         synth_->setVariation(static_cast<std::uint32_t>(build[1]), build[2]);
     }
     lastMassScaling_ = mass;
+    const float even = levelEvenRaw_->load();
+    if (force || even != lastLevelEven_ || trimsVersion_.load(std::memory_order_acquire) != appliedTrims_) {
+        lastLevelEven_ = even;
+        applyBowlLevels();
+    }
 
     // Performance parameters: apply only the ones the user moved, so a value set
     // by MIDI (CC, pedal, wheel) is not overwritten every block.
@@ -165,6 +172,31 @@ void MagnetikaProcessor::applyParameters(bool force) {
     if (bend != perf_.bendCents) { perf_.bendCents = bend; dirty = true; }
 
     if (dirty) pushPerf();
+}
+
+void MagnetikaProcessor::applyBowlLevels() {
+    appliedTrims_ = trimsVersion_.load(std::memory_order_acquire);
+    for (int m = 0; m < 128; ++m)
+        synth_->setNoteGain(Instrument::Glass, m, juce::Decibels::decibelsToGain(static_cast<double>(bowlGainDb(m)), -120.0));
+}
+
+float MagnetikaProcessor::bowlGainDb(int midi) const {
+    return glassEvenDb(midi, levelEvenRaw_->load()) + bowlTrimDb(midi);
+}
+
+float MagnetikaProcessor::bowlTrimDb(int midi) const {
+    return midi >= 0 && midi < 128 ? trimDb_[static_cast<size_t>(midi)].load() : 0.0f;
+}
+
+void MagnetikaProcessor::setBowlTrimDb(int midi, float db) {
+    if (midi < 0 || midi > 127 || !std::isfinite(db)) return;
+    trimDb_[static_cast<size_t>(midi)].store(juce::jlimit(kTrimMinDb, kTrimMaxDb, db));
+    trimsVersion_.fetch_add(1, std::memory_order_release);
+}
+
+void MagnetikaProcessor::resetBowlTrims() {
+    for (auto& t : trimDb_) t.store(0.0f);
+    trimsVersion_.fetch_add(1, std::memory_order_release);
 }
 
 // Mirrors the player's pushPerf: pedal state and the current instrument's coil
@@ -622,6 +654,10 @@ void MagnetikaProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mi
 void MagnetikaProcessor::getStateInformation(juce::MemoryBlock& destData) {
     auto state = apvts_.copyState();
     if (const int z = zonesShared_.load(); z >= 0) state.setProperty("mpeZones", z, nullptr);
+    juce::StringArray trims;  // "midi:dB" for each trimmed bowl
+    for (int m = 0; m < 128; ++m)
+        if (const float t = bowlTrimDb(m); t != 0.0f) trims.add(juce::String(m) + ":" + juce::String(t, 2));
+    if (!trims.isEmpty()) state.setProperty("bowlTrims", trims.joinIntoString(" "), nullptr);
     if (auto xml = state.createXml()) copyXmlToBinary(*xml, destData);
 }
 
@@ -631,6 +667,15 @@ void MagnetikaProcessor::setStateInformation(const void* data, int sizeInBytes) 
             auto state = juce::ValueTree::fromXml(*xml);
             upgradeState(state);  // older projects keep their sound
             if (state.hasProperty("mpeZones")) pendingZones_.store(juce::jlimit(0, 255, static_cast<int>(state["mpeZones"])));
+            for (auto& t : trimDb_) t.store(0.0f);
+            for (const auto& item : juce::StringArray::fromTokens(state["bowlTrims"].toString(), " ", "")) {
+                const int m = item.upToFirstOccurrenceOf(":", false, false).getIntValue();
+                if (item.containsChar(':') && m >= 0 && m < 128)
+                    trimDb_[static_cast<size_t>(m)].store(juce::jlimit(kTrimMinDb, kTrimMaxDb,
+                                                                       item.fromFirstOccurrenceOf(":", false, false).getFloatValue()));
+            }
+            trimsVersion_.fetch_add(1, std::memory_order_release);
+            state.removeProperty("bowlTrims", nullptr);
             apvts_.replaceState(state);
         }
 }
