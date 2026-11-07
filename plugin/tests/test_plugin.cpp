@@ -1001,6 +1001,28 @@ void testBowlLevels() {
     CHECK(c.bowlGainDb(84) == 0.0f, "with evening off C6 should play as modelled, got %g dB", c.bowlGainDb(84));
 }
 
+void testBowlLevelsPanel() {
+    // the LEVELS drawer: a press sets the bowl under it, a sweep fills the bowls between,
+    // a double-click clears one
+    MagnetikaProcessor p;
+    magnetika::plugin::BowlLevelsPanel panel(p);
+    panel.setBounds(0, 0, 488, 560);
+    const auto at = [&](int midi, float db) { return juce::Point<float>(panel.xOf(midi), panel.yOf(db)); };
+    panel.mouseDown(mouseAt(panel, at(72, -6), false));
+    CHECK(p.bowlTrimDb(72) == -6.0f, "pressing C5 at -6 dB set %g", p.bowlTrimDb(72));
+    panel.mouseDrag(mouseAt(panel, at(76, -2), true));
+    panel.mouseUp(mouseAt(panel, at(76, -2), true));
+    CHECK(p.bowlTrimDb(76) == -2.0f, "the sweep's end set %g", p.bowlTrimDb(76));
+    CHECK(p.bowlTrimDb(74) == -4.0f, "the sweep did not fill between: D5 %g, want -4", p.bowlTrimDb(74));
+    CHECK(p.bowlTrimDb(71) == 0.0f && p.bowlTrimDb(77) == 0.0f, "the sweep spilled past its ends");
+    panel.mouseDoubleClick(mouseAt(panel, at(74, 8), false));
+    CHECK(p.bowlTrimDb(74) == 0.0f, "double-click did not clear D5 (%g)", p.bowlTrimDb(74));
+    panel.mouseDown(mouseAt(panel, at(96, 0.3f), false));
+    CHECK(p.bowlTrimDb(96) == 0.0f, "near 0 dB should catch at 0, got %g", p.bowlTrimDb(96));
+    CHECK(std::fabs(panel.xOf(48) - panel.graph().getX()) < panel.graph().getWidth() / 49 && panel.xOf(96) < panel.graph().getRight(),
+          "the drawer should span C3..C7");
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
@@ -1026,7 +1048,11 @@ int snapshot(const char* path, const juce::String& view) {
     auto* me = dynamic_cast<magnetika::plugin::MagnetikaEditor*>(ed.get());
     ed->setSize(1200, 800);
     if (me) {
-        if (view.contains("modify")) me->showModify(true);
+        if (view.contains("modify") || view.contains("levels")) me->showModify(true);
+        if (view.contains("levels")) {
+            for (auto [m, db] : {std::pair{64, -6.0f}, {65, -4.5f}, {66, -3.0f}, {77, 3.0f}, {90, 6.0f}}) p.setBowlTrimDb(m, db);
+            me->modifyPage().showLevels(true);
+        }
         me->poll();
     }
     const auto img = ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f);
@@ -1170,6 +1196,7 @@ int main(int argc, char** argv) {
     testBuildParameters();
     testOldStateLoadsWithoutVariation();
     testBowlLevels();
+    testBowlLevelsPanel();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

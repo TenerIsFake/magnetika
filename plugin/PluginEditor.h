@@ -22,6 +22,7 @@ public:
     void resized() override;
     void showModify(bool modify);
     void poll() { play_.poll(); modify_.poll(); }  // for offscreen snapshots
+    ModifyPage& modifyPage() { return modify_; }
 
 private:
     theme::LookAndFeel laf_;

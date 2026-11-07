@@ -54,6 +54,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     std::function<void()> onAdvanced;
+    std::function<void()> onLevels;  // set (glass) to show the LEVELS button
 
 private:
     struct Knob {
@@ -68,6 +69,7 @@ private:
     std::vector<std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment>> switchAtts_;
     std::vector<Knob> knobs_;
     juce::TextButton advancedBtn_{"ADVANCED"};
+    juce::TextButton levelsBtn_{"LEVELS"};
 };
 
 // Every parameter as a plain control (the phase-2 editor, kept as a drawer).
@@ -94,6 +96,39 @@ private:
     juce::TextButton closeBtn_{"CLOSE"};
 };
 
+// Glass: each bowl's level, C3-C7. Drag a bar to trim that bowl (sweep across bowls to
+// draw a curve, double-click to clear one); the evening knob sets how much of the
+// built-in correction applies. Bars show the trim; the line, how loud each bowl sounds re C4.
+class BowlLevelsPanel : public juce::Component {
+public:
+    static constexpr int kLow = 48, kHigh = 96;  // C3..C7
+    explicit BowlLevelsPanel(MagnetikaProcessor& p);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+    std::function<void()> onClose;
+    // the graph's geometry, for the editor and its tests
+    juce::Rectangle<float> graph() const { return graph_; }
+    float xOf(int midi) const;
+    float yOf(float db) const;
+
+private:
+    int bowlAt(float x) const;
+    float dbAt(float y) const;
+    void setTrim(int midi, float db);
+    MagnetikaProcessor& proc_;
+    juce::Slider evenKnob_{juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox};
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> evenAtt_;
+    juce::TextButton resetBtn_{"RESET TRIMS"}, closeBtn_{"CLOSE"};
+    juce::Rectangle<float> graph_, knobCell_;
+    int hover_ = -1, lastDrag_ = -1;
+};
+
 class ModifyPage : public juce::Component, private juce::Timer {
 public:
     ModifyPage(MagnetikaProcessor&, std::function<void()> onDone);
@@ -101,6 +136,11 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void poll() { cutaway_.poll(); timerCallback(); }
+    void showLevels(bool on) {
+        if (on) advanced_.setVisible(false);
+        levels_.setVisible(on);
+    }
+    BowlLevelsPanel& levelsPanel() { return levels_; }
 
 private:
     void timerCallback() override;
@@ -118,6 +158,7 @@ private:
     Cutaway cutaway_;
     Faceplate glassPlate_, barsPlate_;
     AdvancedPanel advanced_;
+    BowlLevelsPanel levels_;
     juce::MidiKeyboardComponent keyboard_;
     RangeStrip range_;
     MagnetikaProcessor::Display d_;

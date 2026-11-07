@@ -351,6 +351,9 @@ Faceplate::Faceplate(MagnetikaProcessor& p, std::vector<SwitchSpec> switches, st
         }
     advancedBtn_.onClick = [this] { if (onAdvanced) onAdvanced(); };
     addAndMakeVisible(advancedBtn_);
+    levelsBtn_.setTooltip("Bowl levels: even out the bowls and trim each one");
+    levelsBtn_.onClick = [this] { if (onLevels) onLevels(); };
+    addChildComponent(levelsBtn_);
 }
 
 void Faceplate::resized() {
@@ -369,6 +372,8 @@ void Faceplate::resized() {
             knobs_[k].slider->setBounds(juce::Rectangle<float>(sec.getX() + cw * static_cast<float>(j), sec.getY(), cw, 70).withSizeKeepingCentre(70, 70).toNearestInt());
     }
     advancedBtn_.setBounds(getWidth() - 20 - 112, getHeight() - 18 - 30, 112, 30);
+    levelsBtn_.setBounds(advancedBtn_.getX() - 8 - 96, advancedBtn_.getY(), 96, 30);
+    levelsBtn_.setVisible(onLevels != nullptr);
 }
 
 void Faceplate::paint(juce::Graphics& g) {
@@ -496,6 +501,192 @@ void AdvancedPanel::resized() {
     content_.setSize(width, y + 10);
 }
 
+// ------------------------------------------------------------------ BowlLevelsPanel
+
+namespace {
+constexpr float kGraphTopDb = MagnetikaProcessor::kTrimMaxDb, kGraphBottomDb = MagnetikaProcessor::kTrimMinDb;
+bool isBlack(int midi) {
+    const int pc = midi % 12;
+    return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
+}
+juce::String dbString(float db) {
+    return (db > 0.005f ? "+" : db < -0.005f ? juce::String::fromUTF8("\xe2\x88\x92") : "") + juce::String(std::abs(db), 1) + " dB";
+}
+} // namespace
+
+BowlLevelsPanel::BowlLevelsPanel(MagnetikaProcessor& p) : proc_(p) {
+    setTitle("Bowl levels");
+    evenKnob_.setRotaryParameters(juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+    evenKnob_.setTitle("Bowl level evening");
+    evenKnob_.setTooltip("Bowl level evening: how much of the built-in correction applies. 100% plays every bowl at "
+                         "C4's level; 0% leaves the bowls as modelled (higher bowls louder, about 5.6 dB an octave).");
+    evenAtt_ = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.state(), id::levelEven, evenKnob_);
+    evenKnob_.onValueChange = [this] { repaint(); };
+    addAndMakeVisible(evenKnob_);
+    resetBtn_.setTooltip("Set every bowl's trim back to 0 dB");
+    resetBtn_.onClick = [this] {
+        proc_.resetBowlTrims();
+        repaint();
+    };
+    addAndMakeVisible(resetBtn_);
+    closeBtn_.onClick = [this] { if (onClose) onClose(); };
+    addAndMakeVisible(closeBtn_);
+}
+
+float BowlLevelsPanel::xOf(int midi) const {
+    const float w = graph_.getWidth() / static_cast<float>(kHigh - kLow + 1);
+    return graph_.getX() + w * (static_cast<float>(midi - kLow) + 0.5f);
+}
+
+float BowlLevelsPanel::yOf(float db) const {
+    return juce::jmap(juce::jlimit(kGraphBottomDb, kGraphTopDb, db), kGraphTopDb, kGraphBottomDb, graph_.getY(), graph_.getBottom());
+}
+
+int BowlLevelsPanel::bowlAt(float x) const {
+    const float w = graph_.getWidth() / static_cast<float>(kHigh - kLow + 1);
+    return juce::jlimit(kLow, kHigh, kLow + static_cast<int>(std::floor((x - graph_.getX()) / w)));
+}
+
+float BowlLevelsPanel::dbAt(float y) const {
+    const float db = juce::jmap(y, graph_.getY(), graph_.getBottom(), kGraphTopDb, kGraphBottomDb);
+    return std::abs(db) < 0.6f ? 0.0f : std::round(db * 2.0f) / 2.0f;  // half-dB steps, with a catch at 0
+}
+
+void BowlLevelsPanel::setTrim(int midi, float db) {
+    proc_.setBowlTrimDb(midi, db);
+    repaint();
+}
+
+void BowlLevelsPanel::mouseDown(const juce::MouseEvent& e) {
+    if (!graph_.expanded(0, 8).contains(e.position)) return;
+    lastDrag_ = bowlAt(e.position.x);
+    setTrim(lastDrag_, dbAt(e.position.y));
+}
+
+void BowlLevelsPanel::mouseDrag(const juce::MouseEvent& e) {
+    if (lastDrag_ < 0) return;
+    // a sweep sets every bowl it crosses, on the straight line between the two points
+    const int now = bowlAt(e.position.x);
+    const float dbNow = dbAt(e.position.y), dbLast = proc_.bowlTrimDb(lastDrag_);
+    const int step = now >= lastDrag_ ? 1 : -1;
+    for (int m = lastDrag_ + step; m != now + step; m += step) {
+        const float t = static_cast<float>(m - lastDrag_) / static_cast<float>(now - lastDrag_);
+        proc_.setBowlTrimDb(m, std::round((dbLast + (dbNow - dbLast) * t) * 2.0f) / 2.0f);
+    }
+    proc_.setBowlTrimDb(now, dbNow);
+    lastDrag_ = hover_ = now;
+    repaint();
+}
+
+void BowlLevelsPanel::mouseUp(const juce::MouseEvent&) { lastDrag_ = -1; }
+
+void BowlLevelsPanel::mouseMove(const juce::MouseEvent& e) {
+    const int h = graph_.expanded(0, 8).contains(e.position) ? bowlAt(e.position.x) : -1;
+    if (h != hover_) {
+        hover_ = h;
+        repaint();
+    }
+}
+
+void BowlLevelsPanel::mouseExit(const juce::MouseEvent&) {
+    hover_ = -1;
+    repaint();
+}
+
+void BowlLevelsPanel::mouseDoubleClick(const juce::MouseEvent& e) {
+    if (graph_.expanded(0, 8).contains(e.position)) setTrim(bowlAt(e.position.x), 0.0f);
+}
+
+void BowlLevelsPanel::paint(juce::Graphics& g) {
+    auto r = getLocalBounds().toFloat();
+    g.setColour(juce::Colours::black.withAlpha(0.55f));
+    g.fillRoundedRectangle(r.translated(0, 6), 12.0f);
+    g.setColour(juce::Colour(0xff18120d));
+    g.fillRoundedRectangle(r, 10.0f);
+    g.setColour(theme::amber.withAlpha(0.35f));
+    g.drawRoundedRectangle(r.reduced(0.5f), 10.0f, 1.0f);
+    g.setColour(theme::ink);
+    g.setFont(theme::sans(14.0f, true).withExtraKerningFactor(0.2f));
+    g.drawText(juce::String::fromUTF8("BOWL LEVELS  \xc2\xb7  C3\xe2\x80\x93" "C7"), r.reduced(18, 14).removeFromTop(24),
+               juce::Justification::centredLeft);
+
+    // evening readout beside its knob
+    g.setColour(theme::inkFaint);
+    g.setFont(theme::sans(11.0f).withExtraKerningFactor(0.16f));
+    g.drawText("EVENING", knobCell_.withTrimmedLeft(52).removeFromTop(knobCell_.getHeight() / 2), juce::Justification::bottomLeft);
+    theme::drawReadout(g, juce::String(juce::roundToInt(evenKnob_.getValue() * 100)) + "%",
+                       knobCell_.withTrimmedLeft(52).withTrimmedTop(knobCell_.getHeight() / 2 + 2).withWidth(64).withHeight(20), 12.0f);
+
+    // graph: key-coloured columns, dB grid, the trims as bars from 0, how loud each bowl sounds as a line
+    theme::drawWell(g, graph_.expanded(6, 6));
+    const float w = graph_.getWidth() / static_cast<float>(kHigh - kLow + 1);
+    for (int m = kLow; m <= kHigh; ++m)
+        if (isBlack(m)) {
+            g.setColour(juce::Colours::black.withAlpha(0.28f));
+            g.fillRect(xOf(m) - w / 2, graph_.getY(), w, graph_.getHeight());
+        }
+    g.setFont(theme::mono(10.0f));
+    for (float db = kGraphBottomDb; db <= kGraphTopDb + 0.1f; db += 6.0f) {
+        const float y = yOf(db);
+        g.setColour(db == 0.0f ? theme::inkMute.withAlpha(0.7f) : juce::Colours::white.withAlpha(0.08f));
+        g.drawHorizontalLine(juce::roundToInt(y), graph_.getX(), graph_.getRight());
+        g.setColour(theme::inkFaint);
+        g.drawText(db == 0.0f ? juce::String("0") : (db > 0 ? "+" : "") + juce::String(juce::roundToInt(db)),
+                   juce::Rectangle<float>(graph_.getX() - 40, y - 7, 32, 14), juce::Justification::centredRight);
+    }
+    for (int m = kLow; m <= kHigh; ++m) {
+        const float t = proc_.bowlTrimDb(m), x = xOf(m);
+        if (t != 0.0f) {
+            const float y0 = yOf(0), y1 = yOf(t);
+            g.setColour(m == hover_ ? theme::amberPale : theme::amber.withAlpha(0.85f));
+            g.fillRect(x - w * 0.32f, std::min(y0, y1), w * 0.64f, std::max(2.0f, std::abs(y1 - y0)));
+        } else {
+            g.setColour(theme::amber.withAlpha(m == hover_ ? 0.9f : 0.35f));
+            g.fillRect(x - w * 0.32f, yOf(0) - 1.0f, w * 0.64f, 2.0f);
+        }
+    }
+    juce::Path plays;
+    for (int m = kLow; m <= kHigh; ++m) {
+        const auto pt = juce::Point<float>(xOf(m), yOf(proc_.bowlGainDb(m) + glassLevelReC4Db(m)));
+        if (m == kLow) plays.startNewSubPath(pt);
+        else plays.lineTo(pt);
+    }
+    g.setColour(juce::Colour(0xff8fc6d8).withAlpha(0.8f));  // glass blue: how loud each bowl sounds, re C4
+    g.strokePath(plays, juce::PathStrokeType(1.5f));
+    g.setColour(theme::inkFaint);
+    g.setFont(theme::sans(11.0f).withExtraKerningFactor(0.1f));
+    for (int m = kLow; m <= kHigh; m += 12)
+        g.drawText(noteName(m), juce::Rectangle<float>(xOf(m) - 20, graph_.getBottom() + 8, 40, 14), juce::Justification::centred);
+
+    // legend / readout
+    auto foot = juce::Rectangle<float>(graph_.getX(), graph_.getBottom() + 28, graph_.getWidth(), 18);
+    g.setFont(theme::sans(11.5f));
+    if (hover_ >= 0) {
+        g.setColour(theme::amberText);
+        g.drawText(noteName(hover_) + juce::String::fromUTF8("   trim ") + dbString(proc_.bowlTrimDb(hover_)) +
+                       juce::String::fromUTF8("   sounds ") + dbString(proc_.bowlGainDb(hover_) + glassLevelReC4Db(hover_)) + " re C4",
+                   foot, juce::Justification::centredLeft);
+    } else {
+        g.setColour(theme::inkFaint);
+        g.drawText(juce::String::fromUTF8("Drag to trim a bowl, sweep for several, double-click to clear. "
+                                          "Line: loudness re C4."),
+                   foot, juce::Justification::centredLeft);
+    }
+}
+
+void BowlLevelsPanel::resized() {
+    auto area = getLocalBounds().reduced(16, 14);
+    auto top = area.removeFromTop(28);
+    closeBtn_.setBounds(top.removeFromRight(84));
+    area.removeFromTop(12);
+    auto row = area.removeFromTop(48);
+    knobCell_ = row.removeFromLeft(140).toFloat();
+    evenKnob_.setBounds(knobCell_.withWidth(48).toNearestInt());
+    resetBtn_.setBounds(row.removeFromRight(120).withSizeKeepingCentre(120, 30));
+    area.removeFromTop(18);
+    graph_ = area.withTrimmedLeft(40).withTrimmedRight(6).withTrimmedBottom(56).toFloat();
+}
+
 // ------------------------------------------------------------------ ModifyPage
 
 ModifyPage::ModifyPage(MagnetikaProcessor& p, std::function<void()> onDone)
@@ -510,7 +701,7 @@ ModifyPage::ModifyPage(MagnetikaProcessor& p, std::function<void()> onDone)
                  {{"COILS", {{"b_G", "SUSTAIN"}, {"b_Gb", "BRAKE"}, {"b_Fmax", "FORCE"}, {"b_vset", "SETPOINT"}}},
                   {"MALLET", {{"b_strikeF", "STRIKE"}, {"b_contact", "CONTACT"}, {"b_strikePos", "POSITION"}, {"b_ratio", "PARTIAL"}}},
                   {juce::CharPointer_UTF8("SPRING \xc2\xb7 TAIL"), {{id::vibDepth, "VIBRATO"}, {"b_vibRate", "RATE"}, {"b_Q1", "Q FUND."}, {"b_damper", "DAMPER"}}}}),
-      advanced_(p),
+      advanced_(p), levels_(p),
       keyboard_(p.keyboardState(), juce::MidiKeyboardComponent::horizontalKeyboard), range_(keyboard_) {
     for (auto* b : {&glassBtn_, &barsBtn_}) {
         b->getProperties().set(theme::segmentProperty, true);
@@ -538,9 +729,15 @@ ModifyPage::ModifyPage(MagnetikaProcessor& p, std::function<void()> onDone)
     addAndMakeVisible(cutaway_);
     addAndMakeVisible(glassPlate_);
     addChildComponent(barsPlate_);
-    glassPlate_.onAdvanced = barsPlate_.onAdvanced = [this] { advanced_.setVisible(true); };
+    glassPlate_.onAdvanced = barsPlate_.onAdvanced = [this] {
+        levels_.setVisible(false);
+        advanced_.setVisible(true);
+    };
     addChildComponent(advanced_);
     advanced_.onClose = [this] { advanced_.setVisible(false); };
+    glassPlate_.onLevels = [this] { showLevels(true); };
+    addChildComponent(levels_);
+    levels_.onClose = [this] { levels_.setVisible(false); };
     keyboard_.setAvailableRange(36, 96);
     keyboard_.setOctaveForMiddleC(4);
     addAndMakeVisible(keyboard_);
@@ -687,6 +884,7 @@ void ModifyPage::resized() {
     glassPlate_.setBounds(688, 76, 488, 560);
     barsPlate_.setBounds(688, 76, 488, 560);
     advanced_.setBounds(688, 76, 488, 560);
+    levels_.setBounds(688, 76, 488, 560);
     pedals_ = {24, 654, 236, 126};
     range_.setBounds(280, 656, 640, 18);
     keyboard_.setBounds(280, 678, 640, 102);
@@ -702,6 +900,7 @@ void ModifyPage::timerCallback() {
     barsBtn_.setToggleState(!glass, juce::dontSendNotification);
     glassPlate_.setVisible(glass);
     barsPlate_.setVisible(!glass);
+    if (!glass) levels_.setVisible(false);  // glass bowls only
     repaint(infoWell_.toNearestInt());
     repaint(buildWell_.toNearestInt());
     repaint(juce::Rectangle<int>(24, 56, 640, 18));  // the rev B hint
