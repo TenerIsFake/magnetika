@@ -1,5 +1,5 @@
 #pragma once
-// The glass armonica in oblique 3-D: 37 nested bowls (C3-C6) on the spindle in a
+// The glass armonica in oblique 3-D: 49 nested bowls (C3-C7) on the spindle in a
 // walnut case, drawn from the rev B tables in millimetres. Sounding bowls glow and
 // show their (2,0) pattern turning; fingers press, drag across rims (glissando)
 // and, with the spindle stopped, must rub along a rim to sound it.
@@ -16,7 +16,7 @@ namespace magnetika::plugin {
 
 class GlassView : public juce::Component, private juce::Timer {
 public:
-    static constexpr int kLow = 48, kHigh = 84;  // C3..C6
+    static constexpr int kLow = 48, kHigh = 96;  // C3..C7
     explicit GlassView(MagnetikaProcessor& p);
     ~GlassView() override;
 

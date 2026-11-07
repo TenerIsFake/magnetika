@@ -10,6 +10,7 @@ namespace magnetika::plugin {
 namespace {
 constexpr float kPi = 3.14159265f;
 constexpr int kLow = 48, kHigh = 84;
+constexpr int kGlassHigh = 96;  // the glass is drawn C3-C7, the bars C3-C6
 const juce::Identifier materialProp{"material"};
 
 juce::String noteName(int m) {
@@ -20,7 +21,10 @@ constexpr float kRevBDiam[25] = {147, 143, 139, 135, 131, 127, 123, 120, 117, 11
                                  101, 98, 95, 93, 90, 87, 85, 82, 80, 78, 76, 73};
 constexpr float kRevBLen[25] = {415, 403, 392, 381, 370, 359, 349, 339, 329, 320, 311, 302, 293,
                                 285, 277, 269, 261, 254, 247, 240, 233, 226, 220, 214, 207};
-float diamOf(int m) { return m >= 60 ? kRevBDiam[std::min(24, m - 60)] : kRevBDiam[std::max(0, m - 48)] * 1.41421356f; }
+float diamOf(int m) {  // rev B C4-C6, extrapolated at sqrt 2 per octave beyond
+    return m > 84 ? kRevBDiam[std::min(24, m - 72)] / 1.41421356f
+                  : m >= 60 ? kRevBDiam[m - 60] : kRevBDiam[std::max(0, m - 48)] * 1.41421356f;
+}
 float lenOf(int m) { return m >= 60 ? kRevBLen[std::min(24, m - 60)] : kRevBLen[std::max(0, m - 48)] * 1.41421356f; }
 float f0Of(int m) { return 440.0f * std::pow(2.0f, (static_cast<float>(m) - 69.0f) / 12.0f); }
 float levelFromEnv(float env) {
@@ -51,7 +55,7 @@ void copperCoil(juce::Graphics& g, juce::Point<float> c, float r) {
 
 void RangeStrip::paint(juce::Graphics& g) {
     const auto lo = kb_.getRectangleForKey(kLow);
-    const auto hi = kb_.getRectangleForKey(kHigh);
+    const auto hi = kb_.getRectangleForKey(high);
     if (lo.isEmpty() || hi.isEmpty()) return;
     const float x0 = lo.getX() + static_cast<float>(kb_.getX() - getX());
     const float x1 = hi.getRight() + static_cast<float>(kb_.getX() - getX());
@@ -62,7 +66,7 @@ void RangeStrip::paint(juce::Graphics& g) {
     g.drawRoundedRectangle(bar, 3.0f, 1.0f);
     g.setColour(juce::Colour(0xfff6dcae));
     g.setFont(theme::sans(11.0f).withExtraKerningFactor(0.14f));
-    g.drawText(juce::String::fromUTF8("INSTRUMENT RANGE C3 \xe2\x80\x93 C6"), bar, juce::Justification::centred);
+    g.drawText(juce::String::fromUTF8("INSTRUMENT RANGE C3 \xe2\x80\x93 ") + noteName(high), bar, juce::Justification::centred);
 }
 
 // ------------------------------------------------------------------ Cutaway
@@ -193,17 +197,18 @@ void Cutaway::paintGlass(juce::Graphics& g) {
         label(g, names[i], x, 428, 11.0f, theme::inkFaint);
         theme::drawReadout(g, vals[i], {x, 434, 140, 26}, 14.0f);
     }
-    // the spindle: 37 bowls, sounding ones lit
+    // the spindle: 49 bowls, sounding ones lit
     g.setGradientFill(juce::ColourGradient(juce::Colour(0xffe5e8ea), 0, 513, juce::Colour(0xff6c7379), 0, 519, false));
     g.fillRoundedRectangle(20, 513, 600, 6, 3);
-    for (int n = kLow; n <= kHigh; ++n) {
-        const float x = 40 + static_cast<float>(n - kLow) * 15.4f, h = diamOf(n) * 0.34f;
+    constexpr float pitch = 11.8f;
+    for (int n = kLow; n <= kGlassHigh; ++n) {
+        const float x = 36 + static_cast<float>(n - kLow) * pitch, h = diamOf(n) * 0.34f;
         bool lit = false;
         for (int i = 0; i < d_.count; ++i) {
             const auto& v = d_.voices[static_cast<size_t>(i)];
             lit = lit || (v.glass && v.midi == n && levelFromEnv(v.level) > 0.04f);
         }
-        auto e = juce::Rectangle<float>(8, h).withCentre({x, 516});
+        auto e = juce::Rectangle<float>(6.5f, h).withCentre({x, 516});
         if (lit) {
             g.setColour(accent.withAlpha(0.35f));
             g.fillEllipse(e.expanded(4));
@@ -213,8 +218,8 @@ void Cutaway::paintGlass(juce::Graphics& g) {
         g.setColour(lit ? accent : juce::Colour(0x73cfeef5));
         g.drawEllipse(e, 1.0f);
     }
-    for (auto [n, s] : {std::pair<int, const char*>{48, "C3"}, {60, "C4"}, {72, "C5"}, {84, "C6"}})
-        label(g, s, 34 + static_cast<float>(n - kLow) * 15.4f, 550, 11.0f, theme::inkFaint);
+    for (auto [n, s] : {std::pair<int, const char*>{48, "C3"}, {60, "C4"}, {72, "C5"}, {84, "C6"}, {96, "C7"}})
+        label(g, s, 30 + static_cast<float>(n - kLow) * pitch, 550, 11.0f, theme::inkFaint);
 }
 
 void Cutaway::paintBars(juce::Graphics& g) {
@@ -900,6 +905,10 @@ void ModifyPage::timerCallback() {
     barsBtn_.setToggleState(!glass, juce::dontSendNotification);
     glassPlate_.setVisible(glass);
     barsPlate_.setVisible(!glass);
+    if (const int high = glass ? kGlassHigh : kHigh; range_.high != high) {
+        range_.high = high;
+        range_.repaint();
+    }
     if (!glass) levels_.setVisible(false);  // glass bowls only
     repaint(infoWell_.toNearestInt());
     repaint(buildWell_.toNearestInt());

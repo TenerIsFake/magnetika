@@ -24,6 +24,7 @@ public:
     std::function<float(int)> levelOf;
     std::function<bool()> below, above;
     juce::String hint;
+    int high = 84;  // the top note shown: glass C7, bars C6 (the bottom is C3)
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void clearLatches();

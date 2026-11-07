@@ -15,11 +15,13 @@
 
 namespace magnetika::plugin {
 
-// Marks the notes the hardware covers (rev B: C4-C6, extendable to C3) above the keyboard.
+// Marks the notes the drawn instrument covers above the keyboard: glass C3-C7 (rev B is
+// C4-C6; C3 and the top octave are extrapolated), bars C3-C6.
 class RangeStrip : public juce::Component {
 public:
     explicit RangeStrip(juce::MidiKeyboardComponent& kb) : kb_(kb) {}
     void paint(juce::Graphics& g) override;
+    int high = 84;  // the top note marked
 
 private:
     juce::MidiKeyboardComponent& kb_;

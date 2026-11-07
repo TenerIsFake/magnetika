@@ -316,6 +316,14 @@ void testGlassTouchAndGlissando() {
     view.mouseDown(mouseAt(view, {5.0f, 5.0f}, false));
     held = soundingNotes(p, 5);
     CHECK(held.empty(), "a press away from the rims must not play a note");
+    view.mouseUp(mouseAt(view, {5.0f, 5.0f}, false));
+    // the drawn instrument reaches C7, and its top bowl plays and is on screen
+    const auto c7 = view.rimTopOf(96);
+    CHECK(view.getLocalBounds().toFloat().contains(c7), "the C7 rim is off screen (%g, %g)", c7.x, c7.y);
+    view.mouseDown(mouseAt(view, c7, false));
+    held = soundingNotes(p, 20);
+    CHECK(held.count(96) == 1 && held.size() == 1, "pressing the C7 rim should hold exactly C7 (held %zu notes)", held.size());
+    view.mouseUp(mouseAt(view, c7, false));
 }
 
 void testBarsStrikeAndRoll() {

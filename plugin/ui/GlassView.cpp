@@ -12,15 +12,17 @@ constexpr float kPi = 3.14159265f;
 constexpr float kDesignW = 1200.0f, kDesignH = 624.0f;
 // camera: yaw about the vertical, then pitch down; design-space scale and origin
 constexpr float kYaw = -30.0f * kPi / 180.0f, kPitch = 20.0f * kPi / 180.0f;
-constexpr float kScale = 1.32f, kCX = 224.0f, kCY = 300.0f;
+constexpr float kScale = 1.06f, kCX = 168.0f, kCY = 372.0f;
 // case, mm: spindle along x at y = 0, z = 0; rims 18 mm apart
-constexpr float x0 = -70, x1 = 36 * 18 + 80, yb = -125, yt = -8, zf = 120, zk = -120, wall = 14;
+constexpr float x0 = -70, x1 = 48 * 18 + 80, yb = -125, yt = -8, zf = 120, zk = -120, wall = 14;
 constexpr int kRimPts = 72;
 
-// rev B diameters C4..C6; C3..B3 extrapolated at sqrt(2) per octave (rim-ring model, D ∝ 1/sqrt(f))
+// rev B diameters C4..C6; C3..B3 and C#6..C7 extrapolated at sqrt(2) per octave (rim-ring model, D ∝ 1/sqrt(f))
 constexpr float kRevB[25] = {147, 143, 139, 135, 131, 127, 123, 120, 117, 113, 110, 107, 104,
                              101, 98, 95, 93, 90, 87, 85, 82, 80, 78, 76, 73};
-float diameterOf(int midi) { return midi >= 60 ? kRevB[midi - 60] : kRevB[midi - 48] * 1.41421356f; }
+float diameterOf(int midi) {
+    return midi > 84 ? kRevB[midi - 72] / 1.41421356f : midi >= 60 ? kRevB[midi - 60] : kRevB[midi - 48] * 1.41421356f;
+}
 
 juce::String noteName(int m) {
     static const char* n[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};

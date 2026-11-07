@@ -6,7 +6,7 @@
 namespace magnetika::plugin {
 
 namespace {
-constexpr int kLow = 48, kHigh = 84;
+constexpr int kLow = 48;
 juce::String noteName(int m) {
     static const char* n[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     return juce::String(n[m % 12]) + juce::String(m / 12 - 1);
@@ -26,7 +26,7 @@ juce::Rectangle<float> NoteStrip::chipArea() const {
 
 juce::Rectangle<float> NoteStrip::chipBounds(int midi) const {
     const auto a = chipArea();
-    const float w = a.getWidth() / static_cast<float>(kHigh - kLow + 1);
+    const float w = a.getWidth() / static_cast<float>(high - kLow + 1);
     return {a.getX() + w * static_cast<float>(midi - kLow) + 1.5f, a.getY() + 2, w - 3, a.getHeight() - 4};
 }
 
@@ -42,10 +42,11 @@ void NoteStrip::paint(juce::Graphics& g) {
         g.drawText(label, box, juce::Justification::centredTop);
     };
     lampBox(r.removeFromLeft(44), below && below(), juce::String::fromUTF8("\xe2\x97\x80 C3"));
-    lampBox(r.removeFromRight(44), above && above(), juce::String::fromUTF8("C6 \xe2\x96\xb6"));
+    lampBox(r.removeFromRight(44), above && above(), noteName(high) + juce::String::fromUTF8(" \xe2\x96\xb6"));
 
     g.setFont(theme::mono(10.5f));
-    for (int m = kLow; m <= kHigh; ++m) {
+    const bool narrow = chipBounds(kLow).getWidth() < 17.0f;  // too narrow to name the sharps (glass, 49 chips)
+    for (int m = kLow; m <= high; ++m) {
         const auto c = chipBounds(m);
         const float L = levelOf ? levelOf(m) : 0.0f;
         if (L > 0.04f) {
@@ -66,12 +67,12 @@ void NoteStrip::paint(juce::Graphics& g) {
         if (latched_.count(m)) {
             g.drawRoundedRectangle(c.reduced(1), 3, 1.5f);
         }
-        g.drawText(noteName(m), c, juce::Justification::centred);
+        if (!(narrow && isSharp(m))) g.drawText(noteName(m), c, juce::Justification::centred);
     }
 }
 
 void NoteStrip::mouseDown(const juce::MouseEvent& e) {
-    for (int m = kLow; m <= kHigh; ++m) {
+    for (int m = kLow; m <= high; ++m) {
         if (!chipBounds(m).contains(e.position)) continue;
         using T = MagnetikaProcessor::UiEvent;
         if (latched_.erase(m)) proc_.pushUiEvent({T::NoteOff, m, 0});
@@ -447,6 +448,7 @@ void PlayPage::timerCallback() {
     else
         strip_.hint = bars_.lastStrike().isNotEmpty() ? bars_.lastStrike()
                                                       : "Tap a bar to strike it. Drag across bars for a roll; hold to keep the damper off.";
+    strip_.high = glass ? GlassView::kHigh : BarsView::kHigh;
     strip_.repaint();
     repaint(speedWell_.toNearestInt());
     repaint(rotWell_.toNearestInt());
