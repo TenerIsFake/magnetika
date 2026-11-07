@@ -59,8 +59,16 @@ public:
     //    table (147 mm across at C4 to 73 mm at C6; outside it, x sqrt 2 per octave)
     //    instead of the JS's 45 mm for all, so a big bowl's rim runs faster under
     //    the finger at the same spindle speed. Takes effect from the next note.
-    void setRevBSizes(bool on) { revBSizes_ = on; }
+    //    `BowlSizes::Franklin`: the 37 glasses of Franklin's 1761 armonica, G3-G6. His
+    //    letter to Beccaria (1762): the largest 9 in across, the smallest 3 in, sizes a
+    //    quarter inch apart. Which note had which size he does not say; here they are
+    //    spread evenly by pitch and rounded to the quarter inch (outside G3-G6, the same
+    //    line, kept between 1 and 12 in).
+    enum class BowlSizes { Uniform, RevB, Franklin };
+    void setBowlSizes(BowlSizes s) { sizes_ = s; }
+    void setRevBSizes(bool on) { sizes_ = on ? BowlSizes::RevB : BowlSizes::Uniform; }
     static double revBDiameterMm(int midi);
+    static double franklinDiameterMm(int midi);
     // 9. Build variation (amount 0 by default = off): every bowl and bar differs a
     //    little, as real ones do: tuning (+-3 c), Q (+-20 %), the A-B split (+-40 %),
     //    principal-axis angle, Bryan factor (+-15 %), partial ratios (+-1 %), all
@@ -150,7 +158,7 @@ private:
     bool coilsArmed_ = false;
     bool scaleModalMass_ = false;
     bool nyquistGuard_ = true;
-    bool revBSizes_ = false;
+    BowlSizes sizes_ = BowlSizes::Uniform;
     std::uint32_t serial_ = 1;
     double variation_ = 0;
     std::uint64_t tick_ = 0;

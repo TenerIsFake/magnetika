@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <functional>
+#include <set>
 #include <cstdio>
 #include <vector>
 
@@ -570,6 +571,40 @@ void testRevBSizes() {
     CHECK(small > revB + 12, "rev B size did not change how C4 speaks at 1 rev/s: %.1f vs %.1f dB", small, revB);
 }
 
+void testFranklinSizes() {
+    // his letter: 9 in at the lowest G, 3 in at the G three octaves up, a quarter inch
+    // apart, the largest, the smallest and 23 between (25 sizes for 37 glasses)
+    CHECK(std::fabs(Synth::franklinDiameterMm(55) - 228.6) < 1e-9 && std::fabs(Synth::franklinDiameterMm(91) - 76.2) < 1e-9,
+          "Franklin G3 %.2f mm, G6 %.2f mm; want 228.6 and 76.2", Synth::franklinDiameterMm(55), Synth::franklinDiameterMm(91));
+    std::set<long> sizes;
+    bool grid = true, falling = true;
+    for (int m = 55; m <= 91; ++m) {
+        const double d = Synth::franklinDiameterMm(m);
+        grid = grid && std::fabs(d / 6.35 - std::round(d / 6.35)) < 1e-9;
+        if (m > 55) falling = falling && d <= Synth::franklinDiameterMm(m - 1);
+        sizes.insert(std::lround(d * 100));
+    }
+    CHECK(grid, "Franklin sizes should be whole quarter inches");
+    CHECK(falling, "a higher glass should never be bigger");
+    CHECK(sizes.size() == 25, "Franklin's set has 25 sizes, got %zu", sizes.size());
+    // the switch: rev B through the old call is the same as through the new one, and
+    // Franklin's bigger G3 rim changes how it plays
+    auto g3 = [](std::function<void(Synth&)> set) {
+        Synth s(SR);
+        playerDefaults(s);
+        s.setCoilsArmed(true);
+        set(s);
+        s.noteOn(55, 0.8);
+        return runBlocks(s, 1.0, [](int) {});
+    };
+    const Stereo oldRevB = g3([](Synth& s) { s.setRevBSizes(true); });
+    const Stereo newRevB = g3([](Synth& s) { s.setBowlSizes(Synth::BowlSizes::RevB); });
+    CHECK(oldRevB.L == newRevB.L && oldRevB.R == newRevB.R, "setRevBSizes(true) and BowlSizes::RevB differ");
+    const Stereo uniform = g3([](Synth&) {});
+    const Stereo franklin = g3([](Synth& s) { s.setBowlSizes(Synth::BowlSizes::Franklin); });
+    CHECK(franklin.L != uniform.L, "Franklin sizes had no effect on G3");
+}
+
 void testBuildVariation() {
     Synth off(SR);
     CHECK(off.vary(72, ParamId::Q2, 3500) == 3500, "variation must be off by default");
@@ -927,6 +962,7 @@ int main() {
     testNoteBend();
     testNoteLoad();
     testRevBSizes();
+    testFranklinSizes();
     testBuildVariation();
     testCoilStart();
     testSustainFade();

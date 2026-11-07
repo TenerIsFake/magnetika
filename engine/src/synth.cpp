@@ -87,6 +87,12 @@ double Synth::revBDiameterMm(int midi) {
     return 104.0 * std::pow(2.0, (72 - midi) / 24.0);  // the table's sqrt 2 per octave, anchored at C5
 }
 
+double Synth::franklinDiameterMm(int midi) {
+    // 9 in at G3 (MIDI 55) to 3 in at G6 (91): 6 in over 36 semitones, to the quarter inch
+    const double inches = std::clamp(std::round((9.0 - (midi - 55) / 6.0) * 4.0) / 4.0, 1.0, 12.0);
+    return inches * 25.4;
+}
+
 namespace {
 // A fixed pseudo-random number in [-1, 1] for (serial, note, slot): splitmix64.
 double unitHash(std::uint32_t serial, int midi, int slot) {
@@ -138,7 +144,8 @@ void Synth::make(Voice& v, int midi) {
     if (v.kind == Voice::Kind::Bowl) {
         v.bowl.setNyquistGuard(nyquistGuard_);
         if (scaleModalMass_) v.bowl.setModalMass(0.02 * std::pow(2.0, (72 - midi) / 12.0));
-        if (revBSizes_) v.bowl.setRimRadius(revBDiameterMm(midi) / 2000.0);
+        if (sizes_ == BowlSizes::RevB) v.bowl.setRimRadius(revBDiameterMm(midi) / 2000.0);
+        if (sizes_ == BowlSizes::Franklin) v.bowl.setRimRadius(franklinDiameterMm(midi) / 2000.0);
         if (variation_ > 0) v.bowl.setAxisAngle(axisAngle(midi));
     } else {
         v.bar.setNyquistGuard(nyquistGuard_);
