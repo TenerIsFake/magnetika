@@ -36,6 +36,7 @@ MagnetikaProcessor::MagnetikaProcessor()
     serialRaw_ = get(id::serialNo);
     variationRaw_ = get(id::variation);
     levelEvenRaw_ = get(id::levelEven);
+    glassModelRaw_ = get(id::glassModel);
     for (auto& t : trimDb_) t.store(0.0f);
     rpnMsb_.fill(127);
     rpnLsb_.fill(127);
@@ -109,10 +110,11 @@ void MagnetikaProcessor::applyParameters(bool force) {
     if (force || mass != lastMassScaling_) synth_->setScaleModalMass(mass > 0.5f);
     lastArmed_ = armed;
     // the instrument as built: its bowl sizes and how its bowls and bars differ (next note on)
-    const float build[3] = {revBRaw_->load(), serialRaw_->load(), variationRaw_->load()};
-    if (force || !std::equal(build, build + 3, lastBuild_)) {
-        std::copy(build, build + 3, lastBuild_);
-        synth_->setRevBSizes(build[0] > 0.5f);
+    const float build[4] = {revBRaw_->load(), serialRaw_->load(), variationRaw_->load(), glassModelRaw_->load()};
+    if (force || !std::equal(build, build + 4, lastBuild_)) {
+        std::copy(build, build + 4, lastBuild_);
+        if (build[3] > 0.5f) synth_->setBowlSizes(Synth::BowlSizes::Franklin);  // his glasses, whatever rev B says
+        else synth_->setRevBSizes(build[0] > 0.5f);
         synth_->setVariation(static_cast<std::uint32_t>(build[1]), build[2]);
     }
     lastMassScaling_ = mass;
@@ -172,6 +174,11 @@ void MagnetikaProcessor::applyParameters(bool force) {
     if (bend != perf_.bendCents) { perf_.bendCents = bend; dirty = true; }
 
     if (dirty) pushPerf();
+}
+
+void MagnetikaProcessor::startNote(int midi, float velocity) {
+    if (perf_.instrument == 0 && franklin() && (midi < kFranklinLow || midi > kFranklinHigh)) return;  // no such glass
+    synth_->noteOn(midi, velocity);
 }
 
 void MagnetikaProcessor::applyBowlLevels() {
@@ -242,7 +249,7 @@ void MagnetikaProcessor::drainUiEvents() {
     const auto scope = uiFifo_.read(uiFifo_.getNumReady());
     auto apply = [this](const UiEvent& e) {
         switch (e.type) {
-            case UiEvent::NoteOn: synth_->noteOn(e.midi, e.value); break;
+            case UiEvent::NoteOn: startNote(e.midi, e.value); break;
             case UiEvent::NoteOff: synth_->noteOff(e.midi); break;
             case UiEvent::Touch: synth_->setNoteTouch(e.midi, e.value); break;
             case UiEvent::FingerSpeed: synth_->setNoteFingerSpeed(e.midi, e.value); break;
@@ -300,7 +307,7 @@ void MagnetikaProcessor::handleMidi(const juce::MidiMessage& m) {
     if (m.isController() && handleRpn(ch, m.getControllerNumber(), m.getControllerValue())) return;
     if (isMpeMember(ch) && handleMpeMember(ch, m)) return;
     if (m.isNoteOn()) {
-        synth_->noteOn(m.getNoteNumber(), m.getFloatVelocity());
+        startNote(m.getNoteNumber(), m.getFloatVelocity());
         return;
     }
     if (m.isNoteOff()) {
@@ -468,7 +475,7 @@ void MagnetikaProcessor::followGlide(int ch, bool mayHandOff) {
         auto& held = mpeHeld_[static_cast<size_t>(bowl)];
         if (held < 255) ++held;
         if (synth_->held(bowl)) return;  // joining a bowl another finger holds: its bend is left alone
-        synth_->noteOn(bowl, c.velocity);
+        startNote(bowl, c.velocity);
         applyPressure(ch);  // a finger already pressing keeps its load on the new bowl
         if (c.slide >= 0) applySlide(bowl, c.slide, true);
     }
@@ -500,7 +507,7 @@ bool MagnetikaProcessor::handleMpeMember(int ch, const juce::MidiMessage& m) {
             c.pressing = false;
         }
         if (strike) {
-            synth_->noteOn(bowl, c.velocity);
+            startNote(bowl, c.velocity);
             // the controller sends a note's initial expression before its note-on
             synth_->setNoteBend(bowl, springCents(ch));
             applyPressure(ch);
@@ -582,7 +589,9 @@ void MagnetikaProcessor::applySlide(int midi, float slide, bool atNoteOn) {
     const bool centre = std::abs(s - 0.5) < 0.01;
     // the limits were measured on the 45 mm bowl; what the glass tolerates is a rim
     // speed, so a bigger bowl reaches it at a lower angular speed
-    const double k = revBRaw_->load() > 0.5f ? 45.0 / (Synth::revBDiameterMm(midi) / 2.0) : 1.0;
+    const double k = franklin()                  ? 45.0 / (Synth::franklinDiameterMm(midi) / 2.0)
+                     : revBRaw_->load() > 0.5f ? 45.0 / (Synth::revBDiameterMm(midi) / 2.0)
+                                               : 1.0;
     // the same test the engine makes: a turning spindle, or a fixed bowl (spin <= 0.05)
     const double spin = spinRaw_->load();
     if (spindleOnRaw_->load() > 0.5f && spin > 0.05) {

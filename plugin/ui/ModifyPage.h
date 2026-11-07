@@ -21,7 +21,7 @@ class RangeStrip : public juce::Component {
 public:
     explicit RangeStrip(juce::MidiKeyboardComponent& kb) : kb_(kb) {}
     void paint(juce::Graphics& g) override;
-    int high = 84;  // the top note marked
+    int low = 48, high = 84;  // the notes marked
 
 private:
     juce::MidiKeyboardComponent& kb_;

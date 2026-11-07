@@ -35,6 +35,7 @@ inline constexpr const char* serialNo = "serialNo";      // which simulated inst
 inline constexpr const char* variation = "variation";    // how much its bowls and bars differ, 0..1
 inline constexpr const char* mpeGlide = "mpeGlide";  // glass: a long MPE bend slides the finger to the next bowl
 inline constexpr const char* levelEven = "levelEven";  // glass: 0..1 of the correction that evens the bowls' levels
+inline constexpr const char* glassModel = "glassModel";  // glass: 0 Magnetika, 1 Franklin's 1761 armonica
 } // namespace id
 
 // One engine parameter of one instrument, driven by one plugin parameter.
@@ -61,6 +62,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 // For build variation that would change how old material sounds (it played as 0),
 // so a state without it gets 0. Call on a tree before replaceState.
 void upgradeState(juce::ValueTree& state);
+
+// Franklin's armonica: 37 glasses, G3-G6 ("the largest glass is G a little below the reach of
+// a common voice, and my highest G, including three compleat octaves", letter to Beccaria,
+// 1762; G3 is our reading of the first). With that model on, other notes do not sound.
+inline constexpr int kFranklinLow = 55, kFranklinHigh = 91;
 
 // Glass: each bowl's level relative to C4 at the plugin's defaults, dB (C2-C7 measured,
 // the ends held beyond). Bowl level evening subtracts it, so 1 plays every bowl alike.

@@ -40,8 +40,13 @@ public:
     void poll() { timerCallback(); }
     // The top of a bowl's rim, in component coordinates (where a finger plays it).
     juce::Point<float> rimTopOf(int midi) const {
-        return midi >= kLow && midi <= kHigh && !bowls_.empty() ? bowls_[static_cast<size_t>(midi - kLow)].tip : juce::Point<float>{};
+        return midi >= low_ && midi <= high_ && !bowls_.empty() ? bowls_[static_cast<size_t>(midi - low_)].tip : juce::Point<float>{};
     }
+    // The instrument drawn: Magnetika (C3-C7) or Franklin's armonica (37 glasses G3-G6,
+    // painted rims, mahogany, treadle-driven). Follows the glassModel parameter.
+    bool franklin() const { return franklin_; }
+    int lowNote() const { return low_; }
+    int highNote() const { return high_; }
 
 private:
     friend struct GlassViewTestAccess;  // plugin/tests: multi-touch without a touch screen
@@ -78,7 +83,11 @@ private:
     bool spindleOn() const;
 
     MagnetikaProcessor& proc_;
-    std::vector<Bowl> bowls_;  // index midi - kLow; drawn far (high) to near (low)
+    std::vector<Bowl> bowls_;  // index midi - low_; drawn far (high) to near (low)
+    bool franklin_ = false;
+    int low_ = kLow, high_ = kHigh;
+    float xOff_ = 0;  // mm along the spindle: a shorter instrument is centred where the long one sits
+    void setModel(bool franklin);
     juce::Path front_, frontTop_, frontLip_, nearEnd_, nearTop_, plinthFront_, plinthEnd_, backInner_, farInner_,
         floorInner_, backTop_, farBearing_, shadow_, bearingTop_, bearingFront_, bearingEnd_, motorTop_, motorFront_,
         motorEnd_, pulleyBig_, pulleySmall_, occluders_;

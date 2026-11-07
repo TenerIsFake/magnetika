@@ -1031,6 +1031,51 @@ void testBowlLevelsPanel() {
           "the drawer should span C3..C7");
 }
 
+void testFranklinModel() {
+    // the "Franklin's armonica" factory entry: his 37 glasses (G3-G6), no coils, lead crystal;
+    // other notes do not sound; the view draws his instrument; any material brings Magnetika back
+    MagnetikaProcessor p;
+    p.setPlayConfigDetails(0, 2, SR, 256);
+    p.prepareToPlay(SR, 256);
+    magnetika::plugin::PlayPage page(p, [] {});
+    page.setSize(1200, 800);
+    auto val = [&](const char* pid) { return p.state().getRawParameterValue(pid)->load(); };
+    auto plays = [&](int midi) {
+        juce::AudioBuffer<float> buf(2, 256);
+        juce::MidiBuffer on, none;
+        on.addEvent(juce::MidiMessage::noteOn(1, midi, 0.8f), 0);
+        buf.clear();
+        p.processBlock(buf, on);
+        const bool sounding = soundingNotes(p, 4).count(midi) == 1;
+        juce::MidiBuffer off;
+        off.addEvent(juce::MidiMessage::noteOff(1, midi), 0);
+        buf.clear();
+        p.processBlock(buf, off);
+        return sounding;
+    };
+    const int franklin = static_cast<int>(magnetika::plugin::materials().size());
+    page.selectFactory(franklin);
+    CHECK(val("glassModel") == 1.0f, "the Franklin entry should select his instrument");
+    CHECK(val("coilsArmed") == 0.0f, "Franklin's armonica has no coils");
+    CHECK(std::fabs(val("g_Q2") - 4000.0f) < 1.0f, "Franklin entry material: Q2 %g, want lead crystal's 4000", val("g_Q2"));
+    CHECK(!plays(50) && plays(55) && plays(91) && !plays(92), "Franklin model: only G3-G6 should sound");
+
+    magnetika::plugin::GlassView view(p);
+    view.setSize(1200, 624);
+    view.poll();
+    CHECK(view.franklin() && view.lowNote() == 55 && view.highNote() == 91, "the view should draw his 37 glasses, G3-G6");
+    CHECK(view.rimTopOf(48) == juce::Point<float>() && view.getLocalBounds().toFloat().contains(view.rimTopOf(91)),
+          "no C3 bowl on Franklin's armonica; his G6 on screen");
+    view.mouseDown(mouseAt(view, view.rimTopOf(91), false));
+    CHECK(soundingNotes(p, 20).count(91) == 1, "pressing his top glass should sound G6");
+    view.mouseUp(mouseAt(view, view.rimTopOf(91), false));
+    soundingNotes(p, 5);
+
+    page.selectFactory(3);  // Borosilicate
+    CHECK(val("glassModel") == 0.0f && val("coilsArmed") == 1.0f, "a material should bring back Magnetika with its coils");
+    CHECK(plays(50), "Magnetika plays D3 again");
+}
+
 } // namespace
 
 // `test-plugin --snapshot out.png` paints the editor offscreen into a PNG, for
@@ -1045,6 +1090,14 @@ int snapshot(const char* path, const juce::String& view) {
     if (view.contains("bars")) setParam(p, "instrument", 1.0f);
     if (view.contains("mpe")) setParam(p, "mpe", 1.0f);
     if (view.contains("revb")) setParam(p, "revBSizes", 1.0f);
+    if (view.contains("franklin")) {  // his armonica, as its factory entry sets it
+        setParam(p, "glassModel", 1.0f);
+        setParam(p, "coilsArmed", 0.0f);
+        setParam(p, "g_Q2", 4000.0f);
+        setParam(p, "g_Q3", 3000.0f);
+        setParam(p, "g_split", 1.0f);
+        p.state().state.setProperty("material", static_cast<int>(magnetika::plugin::materials().size()), nullptr);
+    }
     for (int m : {60, 64, 67, 72}) p.pushUiEvent({UiEvent::NoteOn, m, 0.85f});
     juce::AudioBuffer<float> buf(2, 256);
     juce::MidiBuffer midi;
@@ -1205,6 +1258,7 @@ int main(int argc, char** argv) {
     testOldStateLoadsWithoutVariation();
     testBowlLevels();
     testBowlLevelsPanel();
+    testFranklinModel();
     if (failures) {
         std::printf("%d check(s) failed\n", failures);
         return 1;

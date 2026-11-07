@@ -24,7 +24,7 @@ public:
     std::function<float(int)> levelOf;
     std::function<bool()> below, above;
     juce::String hint;
-    int high = 84;  // the top note shown: glass C7, bars C6 (the bottom is C3)
+    int low = 48, high = 84;  // the notes shown: glass C3-C7 (Franklin G3-G6), bars C3-C6
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void clearLatches();
@@ -52,6 +52,9 @@ public:
     PlayPage(MagnetikaProcessor& p, std::function<void()> onModify);
     ~PlayPage() override;
     void poll() { glass_.poll(); bars_.poll(); timerCallback(); }  // for offscreen snapshots
+    // Selects a factory entry of the current instrument (glass: the materials, then
+    // Franklin's armonica), as stepping the preset arrows to it does.
+    void selectFactory(int idx) { applyFactory(idx); }
     void paint(juce::Graphics&) override;
     void resized() override;
 

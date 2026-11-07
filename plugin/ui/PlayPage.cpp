@@ -6,13 +6,16 @@
 namespace magnetika::plugin {
 
 namespace {
-constexpr int kLow = 48;
 juce::String noteName(int m) {
     static const char* n[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     return juce::String(n[m % 12]) + juce::String(m / 12 - 1);
 }
 bool isSharp(int m) { const int k = m % 12; return k == 1 || k == 3 || k == 6 || k == 8 || k == 10; }
 const juce::Identifier materialProp{"material"};
+// The glass factory entries: the materials, then Franklin's armonica (lead crystal + band).
+int franklinPreset() { return static_cast<int>(materials().size()); }
+int glassFactoryCount() { return franklinPreset() + 1; }
+int materialOf(int factoryIndex) { return factoryIndex == franklinPreset() ? 2 : factoryIndex; }
 } // namespace
 
 // ------------------------------------------------------------------ NoteStrip
@@ -26,8 +29,8 @@ juce::Rectangle<float> NoteStrip::chipArea() const {
 
 juce::Rectangle<float> NoteStrip::chipBounds(int midi) const {
     const auto a = chipArea();
-    const float w = a.getWidth() / static_cast<float>(high - kLow + 1);
-    return {a.getX() + w * static_cast<float>(midi - kLow) + 1.5f, a.getY() + 2, w - 3, a.getHeight() - 4};
+    const float w = a.getWidth() / static_cast<float>(high - low + 1);
+    return {a.getX() + w * static_cast<float>(midi - low) + 1.5f, a.getY() + 2, w - 3, a.getHeight() - 4};
 }
 
 void NoteStrip::paint(juce::Graphics& g) {
@@ -41,12 +44,12 @@ void NoteStrip::paint(juce::Graphics& g) {
         g.setFont(theme::sans(10.5f));
         g.drawText(label, box, juce::Justification::centredTop);
     };
-    lampBox(r.removeFromLeft(44), below && below(), juce::String::fromUTF8("\xe2\x97\x80 C3"));
+    lampBox(r.removeFromLeft(44), below && below(), juce::String::fromUTF8("\xe2\x97\x80 ") + noteName(low));
     lampBox(r.removeFromRight(44), above && above(), noteName(high) + juce::String::fromUTF8(" \xe2\x96\xb6"));
 
     g.setFont(theme::mono(10.5f));
-    const bool narrow = chipBounds(kLow).getWidth() < 17.0f;  // too narrow to name the sharps (glass, 49 chips)
-    for (int m = kLow; m <= high; ++m) {
+    const bool narrow = chipBounds(low).getWidth() < 17.0f;  // too narrow to name the sharps (glass, 49 chips)
+    for (int m = low; m <= high; ++m) {
         const auto c = chipBounds(m);
         const float L = levelOf ? levelOf(m) : 0.0f;
         if (L > 0.04f) {
@@ -72,7 +75,7 @@ void NoteStrip::paint(juce::Graphics& g) {
 }
 
 void NoteStrip::mouseDown(const juce::MouseEvent& e) {
-    for (int m = kLow; m <= high; ++m) {
+    for (int m = low; m <= high; ++m) {
         if (!chipBounds(m).contains(e.position)) continue;
         using T = MagnetikaProcessor::UiEvent;
         if (latched_.erase(m)) proc_.pushUiEvent({T::NoteOff, m, 0});
@@ -161,7 +164,7 @@ PlayPage::PlayPage(MagnetikaProcessor& p, std::function<void()> onModify)
 
     addAndMakeVisible(glass_);
     addChildComponent(bars_);
-    glass_.setMaterial(juce::jlimit(0, static_cast<int>(materials().size()) - 1, static_cast<int>(st.state.getProperty(materialProp, 3))));
+    glass_.setMaterial(materialOf(juce::jlimit(0, glassFactoryCount() - 1, static_cast<int>(st.state.getProperty(materialProp, 3)))));
     strip_.levelOf = [this](int m) { return instrument() == 0 ? glass_.levelOf(m) : bars_.levelOf(m); };
     strip_.below = [this] { return instrument() == 0 ? glass_.outsideBelow() : bars_.outsideBelow(); };
     strip_.above = [this] { return instrument() == 0 ? glass_.outsideAbove() : bars_.outsideAbove(); };
@@ -215,7 +218,7 @@ void PlayPage::stepPreset(int delta) {
     userNames_ = store_.names();  // the folder may have changed
     if (userSel_ >= userNames_.size()) userSel_ = -1;
     const bool glass = instrument() == 0;
-    const int factory = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
+    const int factory = glass ? glassFactoryCount() : static_cast<int>(barPresets().size());
     const int total = factory + userNames_.size();
     const int current = userSel_ >= 0 ? factory + userSel_
                                       : clampedProp(st.state, glass ? materialProp : barPresetProp, glass ? 3 : 0, factory);
@@ -223,7 +226,7 @@ void PlayPage::stepPreset(int delta) {
     if (next >= factory) {
         userSel_ = next - factory;
         if (!store_.load(userNames_[userSel_], st)) userSel_ = -1;
-        glass_.setMaterial(clampedProp(st.state, materialProp, 3, static_cast<int>(materials().size())));
+        glass_.setMaterial(materialOf(clampedProp(st.state, materialProp, 3, glassFactoryCount())));
     } else {
         userSel_ = -1;
         applyFactory(next);
@@ -261,13 +264,24 @@ void PlayPage::savePreset() {
 void PlayPage::applyFactory(int idx) {
     auto& st = proc_.state();
     if (instrument() == 0) {
-        idx = juce::jlimit(0, static_cast<int>(materials().size()) - 1, idx);
+        idx = juce::jlimit(0, glassFactoryCount() - 1, idx);
         st.state.setProperty(materialProp, idx, nullptr);
-        const auto& m = materials()[static_cast<size_t>(idx)];
+        const bool franklin = idx == franklinPreset();
+        const bool wasFranklin = st.getRawParameterValue(id::glassModel)->load() > 0.5f;
+        if (franklin) {
+            // Franklin's armonica: his 37 glasses and no coils. English flint (lead) glass with
+            // a painted band is our guess at the material: the letter does not name the glass.
+            setParam(id::glassModel, 1.0f);
+            setParam(id::coilsArmed, 0.0f);
+        } else if (wasFranklin) {  // back to the Magnetika instrument, coils and all
+            setParam(id::glassModel, 0.0f);
+            setParam(id::coilsArmed, 1.0f);
+        }
+        const auto& m = materials()[static_cast<size_t>(materialOf(idx))];
         setParam("g_Q2", m.Q2);
         setParam("g_Q3", m.Q3);
         setParam("g_split", m.split);
-        glass_.setMaterial(idx);
+        glass_.setMaterial(materialOf(idx));
     } else {
         idx = juce::jlimit(0, static_cast<int>(barPresets().size()) - 1, idx);
         st.state.setProperty(barPresetProp, idx, nullptr);
@@ -303,17 +317,20 @@ void PlayPage::paint(juce::Graphics& g) {
 
     // preset readout: a factory entry, or a user preset after them
     const auto& users = userNames_;
-    const int factory = glass ? static_cast<int>(materials().size()) : static_cast<int>(barPresets().size());
+    const int factory = glass ? glassFactoryCount() : static_cast<int>(barPresets().size());
     const bool user = userSel_ >= 0 && userSel_ < users.size();
     const int idx = user ? factory + userSel_
                          : clampedProp(proc_.state().state, glass ? materialProp : barPresetProp, glass ? 3 : 0, factory);
-    const juce::String name = user ? users[userSel_]
-                                   : glass ? juce::String(materials()[static_cast<size_t>(idx)].name)
-                                           : juce::String(barPresets()[static_cast<size_t>(idx)].name);
+    const bool franklinEntry = glass && !user && idx == franklinPreset();
+    const juce::String name = user            ? users[userSel_]
+                              : franklinEntry ? juce::String("Franklin's armonica")
+                              : glass         ? juce::String(materials()[static_cast<size_t>(idx)].name)
+                                              : juce::String(barPresets()[static_cast<size_t>(idx)].name);
     auto pr = presetText_;
     g.setColour(theme::inkFaint);
     g.setFont(theme::sans(10.5f).withExtraKerningFactor(0.16f));
-    g.drawText(juce::String::fromUTF8(user ? "USER PRESET  \xc2\xb7  " : glass ? "MATERIAL  \xc2\xb7  " : "MALLET  \xc2\xb7  ") +
+    g.drawText(juce::String::fromUTF8(user ? "USER PRESET  \xc2\xb7  " : franklinEntry ? "1761  \xc2\xb7  "
+                                      : glass ? "MATERIAL  \xc2\xb7  " : "MALLET  \xc2\xb7  ") +
                    juce::String(idx + 1) + " / " + juce::String(factory + users.size()),
                pr.removeFromTop(pr.getHeight() * 0.45f), juce::Justification::bottomLeft);
     g.setColour(theme::amberText);
@@ -448,7 +465,8 @@ void PlayPage::timerCallback() {
     else
         strip_.hint = bars_.lastStrike().isNotEmpty() ? bars_.lastStrike()
                                                       : "Tap a bar to strike it. Drag across bars for a roll; hold to keep the damper off.";
-    strip_.high = glass ? GlassView::kHigh : BarsView::kHigh;
+    strip_.low = glass ? glass_.lowNote() : BarsView::kLow;
+    strip_.high = glass ? glass_.highNote() : BarsView::kHigh;
     strip_.repaint();
     repaint(speedWell_.toNearestInt());
     repaint(rotWell_.toNearestInt());

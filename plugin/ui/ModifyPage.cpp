@@ -54,7 +54,7 @@ void copperCoil(juce::Graphics& g, juce::Point<float> c, float r) {
 // ------------------------------------------------------------------ RangeStrip
 
 void RangeStrip::paint(juce::Graphics& g) {
-    const auto lo = kb_.getRectangleForKey(kLow);
+    const auto lo = kb_.getRectangleForKey(low);
     const auto hi = kb_.getRectangleForKey(high);
     if (lo.isEmpty() || hi.isEmpty()) return;
     const float x0 = lo.getX() + static_cast<float>(kb_.getX() - getX());
@@ -66,7 +66,8 @@ void RangeStrip::paint(juce::Graphics& g) {
     g.drawRoundedRectangle(bar, 3.0f, 1.0f);
     g.setColour(juce::Colour(0xfff6dcae));
     g.setFont(theme::sans(11.0f).withExtraKerningFactor(0.14f));
-    g.drawText(juce::String::fromUTF8("INSTRUMENT RANGE C3 \xe2\x80\x93 ") + noteName(high), bar, juce::Justification::centred);
+    g.drawText(juce::String::fromUTF8("INSTRUMENT RANGE ") + noteName(low) + juce::String::fromUTF8(" \xe2\x80\x93 ") + noteName(high), bar,
+               juce::Justification::centred);
 }
 
 // ------------------------------------------------------------------ Cutaway
@@ -905,7 +906,10 @@ void ModifyPage::timerCallback() {
     barsBtn_.setToggleState(!glass, juce::dontSendNotification);
     glassPlate_.setVisible(glass);
     barsPlate_.setVisible(!glass);
-    if (const int high = glass ? kGlassHigh : kHigh; range_.high != high) {
+    const bool franklin = glass && proc_.state().getRawParameterValue(id::glassModel)->load() > 0.5f;
+    const int low = franklin ? kFranklinLow : kLow, high = franklin ? kFranklinHigh : glass ? kGlassHigh : kHigh;
+    if (range_.low != low || range_.high != high) {
+        range_.low = low;
         range_.high = high;
         range_.repaint();
     }

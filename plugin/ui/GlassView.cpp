@@ -14,7 +14,7 @@ constexpr float kDesignW = 1200.0f, kDesignH = 624.0f;
 constexpr float kYaw = -30.0f * kPi / 180.0f, kPitch = 20.0f * kPi / 180.0f;
 constexpr float kScale = 1.06f, kCX = 168.0f, kCY = 372.0f;
 // case, mm: spindle along x at y = 0, z = 0; rims 18 mm apart
-constexpr float x0 = -70, x1 = 48 * 18 + 80, yb = -125, yt = -8, zf = 120, zk = -120, wall = 14;
+constexpr float x0 = -70, yb = -125, yt = -8, zf = 120, zk = -120, wall = 14;
 constexpr int kRimPts = 72;
 
 // rev B diameters C4..C6; C3..B3 and C#6..C7 extrapolated at sqrt(2) per octave (rim-ring model, D ∝ 1/sqrt(f))
@@ -35,6 +35,21 @@ struct Optics {
     float clear, sparkle, body;
     juce::Colour bodyColour;
 };
+// Franklin painted each glass by its note (letter to Beccaria, 1762): "C, red; D, orange;
+// E, yellow; F, green; G, blue; A, indigo; B, purple", the semitones white.
+juce::Colour franklinPaint(int midi) {
+    switch (midi % 12) {
+        case 0: return juce::Colour(0xffc0281c);
+        case 2: return juce::Colour(0xffd9751c);
+        case 4: return juce::Colour(0xffe2c22a);
+        case 5: return juce::Colour(0xff2e8b3a);
+        case 7: return juce::Colour(0xff2456c4);
+        case 9: return juce::Colour(0xff3b2a8c);
+        case 11: return juce::Colour(0xff7a2f93);
+        default: return juce::Colour(0xfff1ede4);
+    }
+}
+
 Optics opticsFor(int i) {
     switch (i) {
         case 0: case 1: return {juce::Colour(0xffcfe9d8), 1.0f, 0.9f, 0.0f, {}};   // soda-lime: green edge
@@ -112,6 +127,19 @@ void GlassView::resized() {
     renderStatic();
 }
 
+void GlassView::setModel(bool franklin) {
+    if (franklin == franklin_ && !bowls_.empty()) return;
+    releaseAllTouches();  // the bowls under the fingers are about to change
+    franklin_ = franklin;
+    low_ = franklin ? kFranklinLow : kLow;
+    high_ = franklin ? kFranklinHigh : kHigh;
+    if (getWidth() > 0 && getHeight() > 0) {
+        build();
+        renderStatic();
+    }
+    repaint();
+}
+
 void GlassView::setMaterial(int index) {
     if (index == material_) return;
     material_ = index;
@@ -135,13 +163,16 @@ void GlassView::build() {
         return v;
     };
     const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
+    xOff_ = static_cast<float>((kHigh - kLow) - (high_ - low_)) * 9.0f;
+    const float xa = x0 + xOff_, xb = xOff_ + static_cast<float>(high_ - low_) * 18.0f + 80.0f;
 
     bowls_.clear();
-    for (int m = kLow; m <= kHigh; ++m) {
+    for (int m = low_; m <= high_; ++m) {
         Bowl b;
         b.midi = m;
-        const int i = m - kLow;
-        const float r = diameterOf(m) / 2, x = static_cast<float>(i) * 18.0f;
+        const int i = m - low_;
+        const float r = (franklin_ ? static_cast<float>(Synth::franklinDiameterMm(m)) : diameterOf(m)) / 2,
+                    x = xOff_ + static_cast<float>(i) * 18.0f;
         b.r = r;
         b.centre = P(x, 0, 0);
         b.R = k * kScale * r;
@@ -198,25 +229,25 @@ void GlassView::build() {
     }
 
     // case
-    shadow_ = quad({{x0 - 30, yb - 4, zk - 30}, {x1 + 30, yb - 4, zk - 30}, {x1 + 30, yb - 4, zf + 40}, {x0 - 30, yb - 4, zf + 40}});
-    backInner_ = quad({{x0, yb, zk + wall}, {x1, yb, zk + wall}, {x1, yt, zk + wall}, {x0, yt, zk + wall}});
-    farInner_ = quad({{x1 - wall, yb, zk}, {x1 - wall, yb, zf}, {x1 - wall, yt, zf}, {x1 - wall, yt, zk}});
-    floorInner_ = quad({{x0, yb + 10, zk}, {x1, yb + 10, zk}, {x1, yb + 10, zf}, {x0, yb + 10, zf}});
-    backTop_ = quad({{x0, yt, zk}, {x1, yt, zk}, {x1, yt, zk + wall}, {x0, yt, zk + wall}});
-    farBearing_ = quad({{x1 - wall - 2, yt, -16}, {x1 + 2, yt, -16}, {x1 + 2, 14, -16}, {x1 - wall - 2, 14, -16}});
-    front_ = quad({{x0, yb, zf}, {x1, yb, zf}, {x1, yt, zf}, {x0, yt, zf}});
-    frontTop_ = quad({{x0, yt, zf - wall}, {x1, yt, zf - wall}, {x1, yt, zf}, {x0, yt, zf}});
-    frontLip_ = polyPath({P(x0, yt, zf), P(x1, yt, zf)}, false);
-    nearEnd_ = quad({{x0, yb, zk}, {x0, yb, zf}, {x0, yt, zf}, {x0, yt, zk}});
-    nearTop_ = quad({{x0, yt, zk}, {x0 + wall, yt, zk}, {x0 + wall, yt, zf}, {x0, yt, zf}});
+    shadow_ = quad({{xa - 30, yb - 4, zk - 30}, {xb + 30, yb - 4, zk - 30}, {xb + 30, yb - 4, zf + 40}, {xa - 30, yb - 4, zf + 40}});
+    backInner_ = quad({{xa, yb, zk + wall}, {xb, yb, zk + wall}, {xb, yt, zk + wall}, {xa, yt, zk + wall}});
+    farInner_ = quad({{xb - wall, yb, zk}, {xb - wall, yb, zf}, {xb - wall, yt, zf}, {xb - wall, yt, zk}});
+    floorInner_ = quad({{xa, yb + 10, zk}, {xb, yb + 10, zk}, {xb, yb + 10, zf}, {xa, yb + 10, zf}});
+    backTop_ = quad({{xa, yt, zk}, {xb, yt, zk}, {xb, yt, zk + wall}, {xa, yt, zk + wall}});
+    farBearing_ = quad({{xb - wall - 2, yt, -16}, {xb + 2, yt, -16}, {xb + 2, 14, -16}, {xb - wall - 2, 14, -16}});
+    front_ = quad({{xa, yb, zf}, {xb, yb, zf}, {xb, yt, zf}, {xa, yt, zf}});
+    frontTop_ = quad({{xa, yt, zf - wall}, {xb, yt, zf - wall}, {xb, yt, zf}, {xa, yt, zf}});
+    frontLip_ = polyPath({P(xa, yt, zf), P(xb, yt, zf)}, false);
+    nearEnd_ = quad({{xa, yb, zk}, {xa, yb, zf}, {xa, yt, zf}, {xa, yt, zk}});
+    nearTop_ = quad({{xa, yt, zk}, {xa + wall, yt, zk}, {xa + wall, yt, zf}, {xa, yt, zf}});
     auto box = [&](float xa, float xb, float ya, float yb2, float za, float zb, juce::Path& top, juce::Path& fr, juce::Path& en) {
         top = quad({{xa, yb2, za}, {xb, yb2, za}, {xb, yb2, zb}, {xa, yb2, zb}});
         fr = quad({{xa, ya, zb}, {xb, ya, zb}, {xb, yb2, zb}, {xa, yb2, zb}});
         en = quad({{xa, ya, za}, {xa, ya, zb}, {xa, yb2, zb}, {xa, yb2, za}});
     };
     juce::Path plinthTop;
-    box(x0 - 8, x1 + 8, yb - 14, yb, zk - 8, zf + 8, plinthTop, plinthFront_, plinthEnd_);
-    box(x0 - 2, x0 + wall + 2, yt, 14, -16, 16, bearingTop_, bearingFront_, bearingEnd_);
+    box(xa - 8, xb + 8, yb - 14, yb, zk - 8, zf + 8, plinthTop, plinthFront_, plinthEnd_);
+    box(xa - 2, xa + wall + 2, yt, 14, -16, 16, bearingTop_, bearingFront_, bearingEnd_);
     box(-122, -84, -100, -54, -26, 26, motorTop_, motorFront_, motorEnd_);
     auto disc = [&](float x, float yc, float r) {
         std::vector<juce::Point<float>> v;
@@ -228,12 +259,12 @@ void GlassView::build() {
     };
     pulleyBig_ = disc(-104, 0, 16);
     pulleySmall_ = disc(-104, -44, 10);
-    rod_ = {P(x0 - 20, 0, 0), P(x1 + 6, 0, 0)};
-    stub_ = {P(x0 - 44, 0, 0), P(x0 - 4, 0, 0)};
+    rod_ = {P(xa - 20, 0, 0), P(xb + 6, 0, 0)};
+    stub_ = {P(xa - 44, 0, 0), P(xa - 4, 0, 0)};
     beltA_ = {P(-104, 0, 16), P(-104, -44, 10)};
     beltB_ = {P(-104, 0, -16), P(-104, -44, -10)};
-    brass_ = P(x0 + 230, -60, zf);
-    const auto along = P(x0 + 231, -60, zf);
+    brass_ = P(xa + 230, -60, zf);
+    const auto along = P(xa + 231, -60, zf);
     brassAngle_ = std::atan2(along.y - brass_.y, along.x - brass_.x);
 
     // what hides the lower bowls: overlays (glows) must not paint over it
@@ -270,7 +301,7 @@ void GlassView::renderStatic() {
     g.fillPath(farInner_);
     g.setColour(juce::Colour(0xff120b06));
     g.fillPath(floorInner_);
-    g.setColour(juce::Colour(0xff6b4a30));
+    g.setColour(juce::Colour(franklin_ ? 0xff6e2c1a : 0xff6b4a30));
     g.fillPath(backTop_);
     g.setColour(juce::Colour(0xff8d949a));
     g.fillPath(farBearing_);
@@ -310,7 +341,7 @@ void GlassView::renderStatic() {
         g.setColour(juce::Colours::white.withAlpha(std::min(1.0f, 0.45f * sp)));
         g.strokePath(b.window2, juce::PathStrokeType(2 * k, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-        g.setColour(juce::Colour(0xff1d1611).withAlpha(0.95f));
+        g.setColour(franklin_ ? franklinPaint(b.midi) : juce::Colour(0xff1d1611).withAlpha(0.95f));
         g.strokePath(b.band, juce::PathStrokeType(k * kScale * 5));
         g.setColour(juce::Colour(0xfff3e2c8).withAlpha(0.18f));
         g.strokePath(b.bandHi, juce::PathStrokeType(1.0f * k));
@@ -337,8 +368,9 @@ void GlassView::renderStatic() {
     // ---- the case in front
     {
         const auto b = front_.getBounds();
-        juce::ColourGradient wood(juce::Colour(0xff5b3b23), b.getX(), b.getY(), juce::Colour(0xff3a2414), b.getRight(), b.getBottom(), false);
-        wood.addColour(0.45, juce::Colour(0xff4a2f1b));
+        juce::ColourGradient wood(juce::Colour(franklin_ ? 0xff6a2a18 : 0xff5b3b23), b.getX(), b.getY(),
+                                  juce::Colour(franklin_ ? 0xff3c1209 : 0xff3a2414), b.getRight(), b.getBottom(), false);
+        wood.addColour(0.45, juce::Colour(franklin_ ? 0xff552013 : 0xff4a2f1b));
         g.setGradientFill(wood);
         g.fillPath(front_);
         // grain: faint long curves, clipped to the panel
@@ -355,16 +387,17 @@ void GlassView::renderStatic() {
             g.strokePath(grain, juce::PathStrokeType(1.0f * k));
         }
     }
-    g.setColour(juce::Colour(0xff8a6141));
+    g.setColour(juce::Colour(franklin_ ? 0xff8e3d26 : 0xff8a6141));
     g.fillPath(frontTop_);
-    g.setColour(juce::Colour(0xffc49a6c).withAlpha(0.5f));
+    g.setColour(juce::Colour(franklin_ ? 0xffc07a5a : 0xffc49a6c).withAlpha(0.5f));
     g.strokePath(frontLip_, juce::PathStrokeType(1.5f * k));
     {
         const auto b = nearEnd_.getBounds();
-        g.setGradientFill(juce::ColourGradient(juce::Colour(0xff6a4529), b.getX(), b.getY(), juce::Colour(0xff3b2515), b.getX(), b.getBottom(), false));
+        g.setGradientFill(juce::ColourGradient(juce::Colour(franklin_ ? 0xff7a3220 : 0xff6a4529), b.getX(), b.getY(),
+                                               juce::Colour(franklin_ ? 0xff43150b : 0xff3b2515), b.getX(), b.getBottom(), false));
         g.fillPath(nearEnd_);
     }
-    g.setColour(juce::Colour(0xff8a6141));
+    g.setColour(juce::Colour(franklin_ ? 0xff8e3d26 : 0xff8a6141));
     g.fillPath(nearTop_);
     g.setColour(juce::Colour(0xff241609));
     g.fillPath(plinthFront_);
@@ -377,13 +410,11 @@ void GlassView::renderStatic() {
     g.setColour(juce::Colour(0xff6b7277));
     g.fillPath(bearingEnd_);
     steel(stub_, k * kScale * 12);
-    g.setColour(juce::Colour(0xff5d6368));
-    g.fillPath(motorTop_);
-    g.setColour(juce::Colour(0xff33383c));
-    g.fillPath(motorFront_);
-    g.setColour(juce::Colour(0xff262a2d));
-    g.fillPath(motorEnd_);
-    for (auto* pl : {&pulleyBig_, &pulleySmall_}) {
+    for (auto* pl : franklin_ ? std::initializer_list<juce::Path*>{} : std::initializer_list<juce::Path*>{&motorTop_, &motorFront_, &motorEnd_}) {
+        g.setColour(pl == &motorTop_ ? juce::Colour(0xff5d6368) : pl == &motorFront_ ? juce::Colour(0xff33383c) : juce::Colour(0xff262a2d));
+        g.fillPath(*pl);
+    }
+    for (auto* pl : franklin_ ? std::initializer_list<juce::Path*>{} : std::initializer_list<juce::Path*>{&pulleyBig_, &pulleySmall_}) {
         g.setColour(juce::Colour(0xff9aa1a6));
         g.fillPath(*pl);
         g.setColour(juce::Colour(0xff3f454a));
@@ -394,14 +425,15 @@ void GlassView::renderStatic() {
         g.addTransform(juce::AffineTransform::rotation(brassAngle_, brass_.x, brass_.y));
         g.setColour(juce::Colour(0xffd8b46a));
         g.setFont(theme::sans(13.0f * k, true).withExtraKerningFactor(0.3f));
-        g.drawSingleLineText(juce::String::fromUTF8("MAGNETIKA  \xc2\xb7  No. 1"), juce::roundToInt(brass_.x), juce::roundToInt(brass_.y));
+        g.drawSingleLineText(juce::String::fromUTF8(franklin_ ? "B. FRANKLIN  \xc2\xb7  1761" : "MAGNETIKA  \xc2\xb7  No. 1"),
+                             juce::roundToInt(brass_.x), juce::roundToInt(brass_.y));
     }
 }
 
 juce::Path GlassView::patternPath(const Bowl& b, float angle, float level) const {
     // the (2,0) pattern: four lobes in the mouth, oriented by the engine's pattern angle
-    const int i = b.midi - kLow;
-    const float x = static_cast<float>(i) * 18.0f;
+    const int i = b.midi - low_;
+    const float x = xOff_ + static_cast<float>(i) * 18.0f;
     std::vector<juce::Point<float>> pts;
     for (int k = 0; k <= 96; ++k) {
         const float t = static_cast<float>(k) / 96.0f * 2 * kPi;
@@ -436,8 +468,8 @@ void GlassView::paint(juce::Graphics& g) {
     const float k = std::min(getWidth() / kDesignW, getHeight() / kDesignH);
     const auto accent = theme::amber;
 
-    // moving belt while the spindle runs
-    {
+    // moving belt while the spindle runs (Franklin's has a treadle, not a motor)
+    if (!franklin_) {
         const float dashes[] = {6 * k, 6 * k};
         const float off = std::fmod(beltPhase_ * k, 12 * k);
         juce::PathStrokeType st(3 * k);
@@ -467,7 +499,7 @@ void GlassView::paint(juce::Graphics& g) {
             g.fillPath(pat);
             g.setColour(accent.withAlpha(0.9f * L));
             g.strokePath(pat, juce::PathStrokeType(1.5f * k));
-            const size_t bi = static_cast<size_t>(b.midi - kLow);
+            const size_t bi = static_cast<size_t>(b.midi - low_);
             const auto& sprite = glowSprite(bi);
             g.setColour(accent.withAlpha(0.9f * L));
             g.drawImage(sprite, glowBounds_[bi], juce::RectanglePlacement::stretchToFit, true);
@@ -604,7 +636,7 @@ void GlassView::mouseDrag(const juce::MouseEvent& e) {
         // rubbing: angular speed along this rim, rad/s, from the pointer speed over
         // the time since the last drag event (never reset by the idle timer)
         const float dt = static_cast<float>(juce::jlimit(1.0, 50.0, now - f.lastTime)) / 1000.0f;  // a pause is not a slow rub
-        const auto& b = bowls_[static_cast<size_t>(f.midi - kLow)];
+        const auto& b = bowls_[static_cast<size_t>(f.midi - low_)];
         const float moved = e.position.getDistanceFrom(f.last);
         sendSpeed(f, juce::jlimit(0.0f, 12.0f, moved / dt / std::max(1.0f, b.R * 0.6f)));
         if (moved > 0.5f) f.lastMoveTime = now;
@@ -625,6 +657,7 @@ void GlassView::mouseUp(const juce::MouseEvent& e) {
 float GlassView::levelOf(int midi) const { return midi >= 0 && midi < 128 ? level_[static_cast<size_t>(midi)] : 0.0f; }
 
 void GlassView::timerCallback() {
+    setModel(proc_.state().getRawParameterValue(id::glassModel)->load() > 0.5f);
     const auto d = proc_.readDisplay();
     std::array<float, 128> lvl{};
     std::array<float, 128> pat = pattern_;
@@ -635,8 +668,8 @@ void GlassView::timerCallback() {
         const float L = levelFromEnv(v.level);
         lvl[static_cast<size_t>(v.midi)] = std::max(lvl[static_cast<size_t>(v.midi)], L);
         pat[static_cast<size_t>(v.midi)] = v.pattern;
-        if (L > 0.04f && v.midi < kLow) below = true;
-        if (L > 0.04f && v.midi > kHigh) above = true;
+        if (L > 0.04f && v.midi < low_) below = true;
+        if (L > 0.04f && v.midi > high_) above = true;
     }
     // repaint only when something visible changed (an idle view costs nothing)
     // (against the last painted frame, so a slow decay still repaints, and goes dark at the end)
@@ -680,7 +713,7 @@ void GlassView::timerCallback() {
         paintedPattern_ = pat;
         repaint();
     }
-    if (spindleOn()) {  // the belt moves: repaint just the drive
+    if (spindleOn() && !franklin_) {  // the belt moves: repaint just the drive
         beltPhase_ += 12.0f * 0.033f / 0.6f * proc_.state().getRawParameterValue("g_spin")->load();
         if (!changed) {
             const juce::Point<float> ends[] = {beltA_.getStart(), beltA_.getEnd(), beltB_.getStart(), beltB_.getEnd()};

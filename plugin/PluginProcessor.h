@@ -113,6 +113,9 @@ private:
     void applySlide(int midi, float slide, bool atNoteOn);
     void resetMpeNotes();
     void renderRange(juce::AudioBuffer<float>& buffer, int start, int end);
+    // Starts a note unless the glass model has no bowl for it (Franklin's: G3-G6 only).
+    void startNote(int midi, float velocity);
+    bool franklin() const { return glassModelRaw_->load() > 0.5f; }
 
     juce::AudioProcessorValueTreeState apvts_;
 
@@ -178,13 +181,13 @@ private:
     int lowerMembers_ = 0, upperMembers_ = 0;  // switching MPE on with no zones gives a lower zone of 15
     float memberBendRange_ = 48;  // semitones of a full member bend (the parameter, or RPN 0)
     float lastMpeBendRangeParam_ = -1;
-    float lastBuild_[3] = {-1, -1, -1};  // rev B sizes, instrument No., variation
+    float lastBuild_[4] = {-1, -1, -1, -1};  // rev B sizes, instrument No., variation, glass model
     float lastSlideInputs_[3] = {-1, -1, -1};  // spindle switch, spin, finger speed: slide depends on them
     bool mpeActive_ = false;
     float lastMpeParam_ = -1;
     std::atomic<float>*mpeRaw_ = nullptr, *mpeBendRangeRaw_ = nullptr, *fingerSpeedRaw_ = nullptr, *spinRaw_ = nullptr,
                        *mpeGlideRaw_ = nullptr, *revBRaw_ = nullptr, *serialRaw_ = nullptr, *variationRaw_ = nullptr,
-                       *levelEvenRaw_ = nullptr;
+                       *levelEvenRaw_ = nullptr, *glassModelRaw_ = nullptr;
     std::array<std::atomic<float>, 128> trimDb_{};
     std::atomic<std::uint32_t> trimsVersion_{0};  // bumped by every trim change
     std::uint32_t appliedTrims_ = ~0u;            // audio thread: the version the engine has

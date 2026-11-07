@@ -176,6 +176,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
     layout.add(fl("g_listen", "Glass ear angle", linear(-180, 180, 1), 0, "deg"));
     layout.add(fl("g_master", "Glass level", linear(0, 1, 0.01f), 0.6f));
     layout.add(fl(id::levelEven, "Bowl level evening", linear(0, 1, 0.01f), 1.0f));
+    layout.add(std::make_unique<APC>(juce::ParameterID{id::glassModel, 1}, "Glass instrument",
+                                     juce::StringArray{"Magnetika", "Franklin 1761"}, 0));
     layout.add(fl("g_damper", "Glass damper (tail, 0 = off)", linear(0, 10, 0.05f), 1.5f, "s"));
     layout.add(fl("g_coilStart", "Glass coil start (0 = off)", linear(0, 0.3f, 0.005f), 0.1f, "N"));
 
